@@ -4,8 +4,8 @@ import mido
 import pygame
 
 from music import (MAJOR_KEY_NAMES, MINOR_KEY_NAMES, chord_keys, chord_names,
-                   interval_name, key_scale, note_name, note_spellings, progression,
-                   staff_step)
+                   SCALE_NAMES, interval_name, note_name, note_spellings, progression,
+                   scale_for, staff_step)
 
 WIDTH, HEIGHT = 800, 480  # the usual resolution of a 5-inch Pi screen
 BACKGROUND = (20, 20, 30)
@@ -21,6 +21,8 @@ BLACK_KEY = (30, 30, 40)
 
 # The button that opens the key picker, under the staff.
 KEY_BUTTON = pygame.Rect(20, 424, 250, 44)
+# The scale's name and notes, on the right; tap it to show the next scale.
+SCALE_BUTTON = pygame.Rect(300, 350, 480, 68)
 
 # The mini keyboard (one octave, C to B) between the staff and the button.
 KEYBOARD_LEFT, KEYBOARD_TOP = 25, 366
@@ -285,6 +287,7 @@ notes_font = pygame.font.SysFont(None, 44)
 numeral_font = pygame.font.SysFont(None, 90)
 button_font = pygame.font.SysFont(None, 36)
 ottava_font = pygame.font.SysFont(None, 28, italic=True)
+small_font = pygame.font.SysFont(None, 26)
 clock = pygame.time.Clock()
 picker_buttons = make_picker_buttons()
 
@@ -306,6 +309,7 @@ sustained = set()  # keys you let go of that the pedal is keeping alive
 pedal_down = False
 
 selected_key = None  # None, or (tonic, minor) like (0, False) for C major
+scale_index = 0      # which of SCALE_NAMES to show; 0 is the key's own scale
 picking = False      # True while the key picker is on screen
 
 port = None        # the piano's MIDI connection, or None while it isn't there
@@ -345,6 +349,9 @@ while running:
                         picking = False
             elif KEY_BUTTON.collidepoint(event.pos):
                 picking = True
+            elif selected_key and SCALE_BUTTON.collidepoint(event.pos):
+                # Step to the next scale, wrapping round to the start.
+                scale_index = (scale_index + 1) % len(SCALE_NAMES)
 
     # 2. Handle every MIDI message that arrived since the last frame.
     #    iter_pending() doesn't wait: if nothing came in, the loop is empty.
@@ -380,18 +387,27 @@ while running:
         draw_text(screen, also_font, "Waiting for piano...", DIM_TEXT, (TEXT_X, 120))
         draw_text(screen, keys_font, "Is it switched on and connected?", DIM_TEXT, (TEXT_X, 165))
     if selected_key:
-        # The key's scale, on the mini keyboard and as a row of names.
-        # Notes you're playing are blue (orange if they're outside the key).
-        scale_notes = key_scale(*selected_key)
+        # The chosen scale, on the mini keyboard and as a row of names.
+        # Notes you're playing are blue (orange if they're outside the scale).
+        scale_name = SCALE_NAMES[scale_index]
+        scale_notes = scale_for(*selected_key, scale_name)
         scale = {pc for pc, name, optional in scale_notes if not optional}
         optional = {pc for pc, name, is_optional in scale_notes if is_optional}
         playing = {n % 12 for n in sounding}
         draw_keyboard(screen, scale, optional, playing)
+
+        pygame.draw.rect(screen, BUTTON, SCALE_BUTTON, border_radius=10)
+        if scale_name == "key":
+            title = key_label(selected_key) + " scale"
+        else:
+            title = key_label(selected_key).split()[0] + " " + scale_name  # "C blues"
+        draw_text(screen, small_font, title + "   (tap to change)", DIM_TEXT,
+                  (SCALE_BUTTON.centerx, SCALE_BUTTON.top + 16))
         words = []
         for pc, name, is_optional in scale_notes:
             text = f"({name})" if is_optional else name
-            words.append((text, IN_CHORD if pc in playing else DIM_TEXT))
-        draw_text_row(screen, keys_font, words, (TEXT_X, 392))
+            words.append((text, IN_CHORD if pc in playing else TEXT))
+        draw_text_row(screen, keys_font, words, (SCALE_BUTTON.centerx, SCALE_BUTTON.top + 46))
     if sounding:
         chords = chord_names(sounding, selected_key)
         interval = interval_name(sounding)

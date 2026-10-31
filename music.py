@@ -468,6 +468,48 @@ def chord_in_key(notes, key):
     return None
 
 
+
+# More scales to show on the keyboard. These don't use each letter once
+# like major and minor do, so each note lists both its half steps and its
+# letters above the tonic: (3, 2) is a minor 3rd (C -> Eb). A 5-note scale
+# skips letters; an 8-note scale has to use one letter twice (Ab and A).
+OTHER_SCALES = {
+    # Five notes, no half steps: the sound of folk songs and rock solos.
+    "major pentatonic": [(0, 0), (2, 1), (4, 2), (7, 4), (9, 5)],
+    "minor pentatonic": [(0, 0), (3, 2), (5, 3), (7, 4), (10, 6)],
+    # Minor pentatonic plus the "blue note", a flattened 5th (Gb in C).
+    "blues": [(0, 0), (3, 2), (5, 3), (6, 4), (7, 4), (10, 6)],
+    # Diminished scales alternate whole and half steps, 8 notes in all.
+    # Whole-half fits dim7 chords; half-whole fits dominant 7th chords.
+    "whole-half diminished": [(0, 0), (2, 1), (3, 2), (5, 3), (6, 4), (8, 5), (9, 5), (11, 6)],
+    "half-whole diminished": [(0, 0), (1, 1), (3, 2), (4, 2), (6, 3), (7, 4), (9, 5), (10, 6)],
+    # Six notes, all a whole step apart: dreamy, fits augmented chords.
+    "whole tone": [(0, 0), (2, 1), (4, 2), (6, 3), (8, 4), (10, 5)],
+}
+# The order the Scale button steps through. "key" means the key's own scale.
+SCALE_NAMES = ["key"] + list(OTHER_SCALES)
+
+
+def scale_for(tonic, minor, scale_name):
+    """The notes of a scale starting on the key's home note.
+
+    Same format as key_scale: (pitch class, name, optional) for each note.
+    """
+    if scale_name == "key":
+        return key_scale(tonic, minor)
+    notes = []
+    for half_steps, letters in OTHER_SCALES[scale_name]:
+        pitch_class = (tonic + half_steps) % 12
+        letter = (tonic_letter(tonic, minor) + letters) % 7
+        accidental = accidental_between(pitch_class, letter)
+        if abs(accidental) == 2:
+            # Strict letters can give a double sharp or flat (Eb blues' blue
+            # note would be Bbb); players write the simpler name (A) instead.
+            letter = (letter + (1 if accidental > 0 else -1)) % 7
+            accidental = accidental_between(pitch_class, letter)
+        notes.append((pitch_class, spelled_name(letter, accidental), False))
+    return notes
+
 # Intervals: the distance between two notes, by half steps within an
 # octave -> (name, how many letters apart). C up to E is 4 half steps and
 # 2 letters (C D E), a major 3rd. The tritone (6) is spelled as a 4th (C-F#).
