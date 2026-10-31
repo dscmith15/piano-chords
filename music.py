@@ -166,3 +166,22 @@ def chord_keys(notes):
         if numeral:
             minor_keys.append((MINOR_KEY_NAMES[tonic], numeral))
     return major_keys, minor_keys
+
+
+# How each pitch class is written on the staff: (letter, accidental).
+# Letters count up from C: C=0, D=1, E=2, F=3, G=4, A=5, B=6.
+# For now black keys are always written as sharps (C# sits on C's spot).
+SHARP_SPELLING = [(0, ""), (0, "#"), (1, ""), (1, "#"), (2, ""), (3, ""),
+                  (3, "#"), (4, ""), (4, "#"), (5, ""), (5, "#"), (6, "")]
+
+
+def staff_step(number):
+    """Where a note sits on the grand staff, and its accidental.
+
+    The step counts lines AND spaces above middle C, so each letter is one
+    step: C4 = 0, D4 = 1, E4 = 2 (the treble staff's bottom line), B3 = -1.
+    The black keys share a step with the note below: C#4 is (0, '#').
+    """
+    letter, accidental = SHARP_SPELLING[number % 12]
+    octave = number // 12 - 1
+    return (octave - 4) * 7 + letter, accidental
