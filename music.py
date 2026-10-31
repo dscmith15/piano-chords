@@ -106,12 +106,23 @@ def accidental_between(pitch_class, letter):
     return (pitch_class - LETTER_PITCHES[letter] + 6) % 12 - 6
 
 
+def spell_from_letter(root, shape, root_letter):
+    """Spell a chord once its root's letter is chosen: the other letters
+    follow from it (every other letter). Returns {pitch class: (letter, accidental)}."""
+    spelling = {}
+    for interval in shape:
+        letter = (root_letter + letter_steps(interval, shape)) % 7
+        pitch_class = (root + interval) % 12
+        spelling[pitch_class] = (letter, accidental_between(pitch_class, letter))
+    return spelling
+
+
 def spell_chord(root, shape):
     """Choose letters for a chord's notes, e.g. Eb major -> Eb G Bb.
 
     Returns {pitch class: (letter, accidental)}. A black-key root is tried
-    as both a sharp and a flat; the other letters follow from it (every
-    other letter), and the spelling with the fewest accidentals wins.
+    as both a sharp and a flat, and the spelling with the fewest
+    accidentals wins.
     """
     best = None
     best_score = None
@@ -121,11 +132,7 @@ def spell_chord(root, shape):
             continue  # e.g. Eb can be D# but not Cx
         if root in LETTER_PITCHES and root_accidental != 0:
             continue  # a white-key root keeps its own name: C, not B#
-        spelling = {}
-        for interval in shape:
-            letter = (root_letter + letter_steps(interval, shape)) % 7
-            pitch_class = (root + interval) % 12
-            spelling[pitch_class] = (letter, accidental_between(pitch_class, letter))
+        spelling = spell_from_letter(root, shape, root_letter)
 
         score = sum(abs(accidental) for letter, accidental in spelling.values())
         # On a tie (F# A# C# vs Gb Bb Db), use the usual key name for the root.
@@ -136,24 +143,40 @@ def spell_chord(root, shape):
     return best
 
 
-def chord_names(notes):
-    """Every name for the chord these MIDI notes make, e.g. ['C6', 'Am7']."""
+def chord_names(notes, key=None):
+    """Every name for the chord these MIDI notes make, e.g. ['C6', 'Am7'].
+
+    With a key, e.g. (6, False) for F# major, the name that fits the key
+    comes first and is spelled with the key's letters (D#m, not Ebm).
+    """
     names = []
     for root, shape in chord_matches(notes):
         root_spelling = spell_chord(root, shape)[root]
         names.append(spelled_name(*root_spelling) + CHORDS[shape])
+
+    in_key = chord_in_key(notes, key) if key and names else None
+    if in_key:
+        root, shape, root_letter = in_key
+        position = chord_matches(notes).index((root, shape))
+        names.pop(position)
+        root_spelling = spell_from_letter(root, shape, root_letter)[root]
+        names.insert(0, spelled_name(*root_spelling) + CHORDS[shape])
     return names
 
 
-def note_spellings(notes):
+def note_spellings(notes, key=None):
     """How to spell each note, from the primary chord they make.
 
-    Returns {pitch class: (letter, accidental)}, or {} when the notes don't
-    make a chord (then the default sharp spellings are used).
+    With a key, a chord that fits it uses the key's letters. Returns
+    {pitch class: (letter, accidental)}, or {} when the notes don't make a
+    chord (then the default sharp spellings are used).
     """
     matches = chord_matches(notes)
     if not matches:
         return {}
+    in_key = chord_in_key(notes, key) if key else None
+    if in_key:
+        return spell_from_letter(*in_key)
     root, shape = matches[0]
     return spell_chord(root, shape)
 
@@ -214,20 +237,26 @@ def numeral_in_key(root, shape, tonic, scale):
 
 
 def first_fit(matches, tonic, scale):
-    """The first chord name that fits this key, as (root, numeral), or None.
+    """The first chord name that fits this key, as (root, shape, numeral), or None.
 
     The primary name is tried first. Another name only wins when the
-    primary doesn't fit, e.g. a dim7 chord, which can be named from any note.
+    primary doesn't fit, e.g. a dim7 chord, which can be named from any note,
+    or when it's built on the key's home note: C-E-G-A in A minor is Am7
+    (i7), not C6.
     """
+    fits = []
     for root, shape in matches:
         numeral = numeral_in_key(root, shape, tonic, scale)
         if numeral:
-            return root, numeral
-    return None
+            fits.append((root, shape, numeral))
+    for fit in fits:
+        if fit[0] == tonic:
+            return fit
+    return fits[0] if fits else None
 
 
 def fit_in_key(notes, tonic, minor):
-    """How the chord fits one key, as (root, numeral), or None if it doesn't.
+    """How the chord fits one key, as (root, shape, numeral), or None if it doesn't.
 
     `tonic` is the key's pitch class (0 = C) and `minor` is True for a minor key.
     """
@@ -242,7 +271,7 @@ def fit_in_key(notes, tonic, minor):
 def chord_numeral(notes, tonic, minor):
     """The chord's Roman numeral in one key (e.g. 'V7'), or None if it's not in it."""
     fit = fit_in_key(notes, tonic, minor)
-    return fit[1] if fit else None
+    return fit[2] if fit else None
 
 
 def chord_keys(notes):
@@ -323,14 +352,19 @@ MINOR_NEXT = {
 }
 
 
+def key_letter(tonic, minor, numeral):
+    """The letter of a key chord's root: V in F# major -> 0 (C, spelled C#)."""
+    key_name = MINOR_KEY_NAMES[tonic][:-1] if minor else MAJOR_KEY_NAMES[tonic]
+    # A key's scale uses each letter once, starting from the tonic's letter,
+    # so step V of an F# key is 4 letters up from F: C.
+    degree = NUMERALS.index(numeral.upper().rstrip("°"))
+    return (LETTERS.index(key_name[0]) + degree) % 7
+
+
 def key_chord_name(tonic, minor, numeral):
     """Name a key's chord with the key's own letters: IV in Eb major -> 'Ab'."""
     offset, suffix, _ = (MINOR_KEY_CHORDS if minor else MAJOR_KEY_CHORDS)[numeral]
-    key_name = MINOR_KEY_NAMES[tonic][:-1] if minor else MAJOR_KEY_NAMES[tonic]
-    # A key's scale uses each letter once, starting from the tonic's letter,
-    # so step V of an F# key is 4 letters up from F: C (spelled C#).
-    degree = NUMERALS.index(numeral.upper().rstrip("°"))
-    letter = (LETTERS.index(key_name[0]) + degree) % 7
+    letter = key_letter(tonic, minor, numeral)
     root = (tonic + offset) % 12
     return spelled_name(letter, accidental_between(root, letter)) + suffix
 
@@ -340,6 +374,25 @@ def numeral_on(tonic, minor, root):
     for numeral, (offset, _, _) in (MINOR_KEY_CHORDS if minor else MAJOR_KEY_CHORDS).items():
         if (root - tonic) % 12 == offset:
             return numeral
+    return None
+
+
+def secondary_dominant(notes, tonic, minor):
+    """If the chord is a secondary dominant in this key, (root, shape, target).
+
+    A major or dominant 7th chord whose root is a 5th above one of the key's
+    chords acts as the V of that chord, borrowed for a moment: G7 in Eb
+    major is the V7 of Cm (vi), so this returns its root, shape and 'vi'.
+    """
+    key_chords = MINOR_KEY_CHORDS if minor else MAJOR_KEY_CHORDS
+    matches = chord_matches(notes)
+    if not matches:
+        return None
+    root, shape = matches[0]
+    if CHORDS[shape] in ("", "7", "9"):
+        target = numeral_on(tonic, minor, (root + 5) % 12)  # a 5th down = a 4th up
+        if target and key_chords[target][1] != "dim":  # a dim chord can't be "home"
+            return root, shape, target
     return None
 
 
@@ -356,23 +409,35 @@ def progression(notes, tonic, minor):
 
     fit = fit_in_key(notes, tonic, minor)
     if fit:
-        root, numeral = fit
+        root, shape, numeral = fit
         basic = numeral_on(tonic, minor, root)  # 'V' for a V7 chord
         _, _, job = key_chords[basic]
         nexts = [(n, key_chord_name(tonic, minor, n)) for n in next_table[basic]]
         return numeral, job, nexts
 
-    # Not in the key: is it a "secondary dominant"? A major or dominant 7th
-    # chord whose root is a 5th above one of the key's chords acts as the V
-    # of that chord, borrowed for a moment. G7 in Eb major is V7 of Cm (vi).
-    matches = chord_matches(notes)
-    if not matches:
-        return None
-    root, shape = matches[0]
-    if CHORDS[shape] in ("", "7", "9"):
-        target = numeral_on(tonic, minor, (root + 5) % 12)  # a 5th down = a 4th up
-        if target and key_chords[target][1] != "dim":  # a dim chord can't be "home"
-            numeral = "V" + CHORDS[shape] + "/" + target   # e.g. "V7/vi"
-            job = f"secondary dominant: resolves to {target}"
-            return numeral, job, [(target, key_chord_name(tonic, minor, target))]
+    secondary = secondary_dominant(notes, tonic, minor)
+    if secondary:
+        root, shape, target = secondary
+        numeral = "V" + CHORDS[shape] + "/" + target   # e.g. "V7/vi"
+        job = f"secondary dominant: resolves to {target}"
+        return numeral, job, [(target, key_chord_name(tonic, minor, target))]
+    return None
+
+
+def chord_in_key(notes, key):
+    """The chord to spell in a key, as (root, shape, root's letter), or None.
+
+    In-key chords take their root's letter from the key's scale. A secondary
+    dominant's root is 4 letters (a 5th) above its target's: V7/vi in C
+    major points at A, so its root is E. Other chords return None.
+    """
+    tonic, minor = key
+    fit = fit_in_key(notes, tonic, minor)
+    if fit:
+        root, shape, _ = fit
+        return root, shape, key_letter(tonic, minor, numeral_on(tonic, minor, root))
+    secondary = secondary_dominant(notes, tonic, minor)
+    if secondary:
+        root, shape, target = secondary
+        return root, shape, (key_letter(tonic, minor, target) + 4) % 7
     return None

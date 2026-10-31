@@ -258,12 +258,12 @@ while running:
         clock.tick(60)
         continue  # skip the normal screen while the picker is open
 
-    spellings = note_spellings(sounding) if sounding else {}
+    spellings = note_spellings(sounding, selected_key) if sounding else {}
     draw_staff(screen, symbols, sounding, spellings)
     key_text = "Key: " + key_label(selected_key) if selected_key else "Key: none"
     draw_button(screen, button_font, KEY_BUTTON, key_text)
     if sounding:
-        chords = chord_names(sounding)
+        chords = chord_names(sounding, selected_key)
         if chords:
             draw_text(screen, chord_font, chords[0], TEXT, (TEXT_X, 80))
         if len(chords) > 1:
