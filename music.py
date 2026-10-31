@@ -173,7 +173,7 @@ def note_spellings(notes, key=None):
     """
     matches = chord_matches(notes)
     if not matches:
-        return {}
+        return interval_spellings(notes, key) if len(notes) == 2 else {}
     in_key = chord_in_key(notes, key) if key else None
     if in_key:
         return spell_from_letter(*in_key)
@@ -352,13 +352,38 @@ MINOR_NEXT = {
 }
 
 
+def tonic_letter(tonic, minor):
+    """The letter of a key's home note, from its name: F# major -> 3 (F)."""
+    key_name = MINOR_KEY_NAMES[tonic] if minor else MAJOR_KEY_NAMES[tonic]
+    return LETTERS.index(key_name[0])
+
+
 def key_letter(tonic, minor, numeral):
     """The letter of a key chord's root: V in F# major -> 0 (C, spelled C#)."""
-    key_name = MINOR_KEY_NAMES[tonic][:-1] if minor else MAJOR_KEY_NAMES[tonic]
     # A key's scale uses each letter once, starting from the tonic's letter,
     # so step V of an F# key is 4 letters up from F: C.
     degree = NUMERALS.index(numeral.upper().rstrip("°"))
-    return (LETTERS.index(key_name[0]) + degree) % 7
+    return (tonic_letter(tonic, minor) + degree) % 7
+
+
+def key_scale(tonic, minor):
+    """The notes of a key's scale, in order, as (pitch class, name, optional).
+
+    Each scale step uses the next letter up from the tonic. Minor keys use
+    natural minor, plus the raised 7th from harmonic minor marked optional:
+    A minor -> A B C D E F G, and (G#) as an option.
+    """
+    scale = NATURAL_MINOR_SCALE if minor else MAJOR_SCALE
+    notes = []
+    for degree, offset in enumerate(scale):
+        pitch_class = (tonic + offset) % 12
+        letter = (tonic_letter(tonic, minor) + degree) % 7
+        notes.append((pitch_class, spelled_name(letter, accidental_between(pitch_class, letter)), False))
+    if minor:
+        pitch_class = (tonic + 11) % 12  # the raised 7th: same letter as the 7th
+        letter = (tonic_letter(tonic, minor) + 6) % 7
+        notes.append((pitch_class, spelled_name(letter, accidental_between(pitch_class, letter)), True))
+    return notes
 
 
 def key_chord_name(tonic, minor, numeral):
@@ -441,3 +466,74 @@ def chord_in_key(notes, key):
         root, shape, target = secondary
         return root, shape, (key_letter(tonic, minor, target) + 4) % 7
     return None
+
+
+# Intervals: the distance between two notes, by half steps within an
+# octave -> (name, how many letters apart). C up to E is 4 half steps and
+# 2 letters (C D E), a major 3rd. The tritone (6) is spelled as a 4th (C-F#).
+INTERVALS = {
+    1: ("minor 2nd", 1),
+    2: ("major 2nd", 1),
+    3: ("minor 3rd", 2),
+    4: ("major 3rd", 2),
+    5: ("perfect 4th", 3),
+    6: ("tritone", 3),
+    7: ("perfect 5th", 4),
+    8: ("minor 6th", 5),
+    9: ("major 6th", 5),
+    10: ("minor 7th", 6),
+    11: ("major 7th", 6),
+}
+# Past an octave, some intervals have their own names: a 9th is an octave
+# plus a 2nd, a 10th an octave plus a 3rd, and so on.
+COMPOUND_INTERVALS = {
+    1: "minor 9th", 2: "major 9th", 3: "minor 10th", 4: "major 10th",
+    5: "perfect 11th", 7: "perfect 12th", 8: "minor 13th", 9: "major 13th",
+}
+
+
+def interval_name(notes):
+    """Name the distance between exactly two notes, e.g. 'perfect 5th', or None."""
+    if len(notes) != 2:
+        return None
+    low, high = sorted(notes)
+    octaves, half_steps = divmod(high - low, 12)  # 19 -> 1 octave + 7
+    if half_steps == 0:
+        return "octave" if octaves == 1 else f"{octaves} octaves"
+    if octaves == 0:
+        return INTERVALS[half_steps][0]
+    if octaves == 1 and half_steps in COMPOUND_INTERVALS:
+        return COMPOUND_INTERVALS[half_steps]
+    plural = "s" if octaves > 1 else ""
+    return f"{INTERVALS[half_steps][0]} + {octaves} octave{plural}"
+
+
+def interval_spellings(notes, key=None):
+    """Spell two notes so their letters match the interval's name.
+
+    A minor 3rd is 2 letters apart, so D#-F# or Eb-Gb, never D#-Gb.
+    The lower note takes the key's letter if it's in the key's scale;
+    otherwise both choices for a black key are tried and the one with
+    fewer accidentals wins. Returns {pitch class: (letter, accidental)}.
+    """
+    low, high = sorted(notes)
+    low_pc, high_pc = low % 12, high % 12
+    letters_apart = INTERVALS.get((high - low) % 12, ("", 0))[1]
+
+    candidates = [letter for letter in range(7) if abs(accidental_between(low_pc, letter)) <= 1]
+    if low_pc in LETTER_PITCHES:
+        candidates = [LETTER_PITCHES.index(low_pc)]  # a white key keeps its own name
+    if key:
+        for pc, name, optional in key_scale(*key):
+            if pc == low_pc:
+                candidates = [LETTERS.index(name[0])]
+
+    best = None
+    for letter in candidates:
+        upper = (letter + letters_apart) % 7
+        spelling = {low_pc: (letter, accidental_between(low_pc, letter)),
+                    high_pc: (upper, accidental_between(high_pc, upper))}
+        score = sum(abs(accidental) for _, accidental in spelling.values())
+        if best is None or score < best_score:
+            best, best_score = spelling, score
+    return best
