@@ -213,8 +213,8 @@ def numeral_in_key(root, shape, tonic, scale):
     return numeral + ending
 
 
-def first_numeral(matches, tonic, scale):
-    """The Roman numeral of the first chord name that fits this key, or None.
+def first_fit(matches, tonic, scale):
+    """The first chord name that fits this key, as (root, numeral), or None.
 
     The primary name is tried first. Another name only wins when the
     primary doesn't fit, e.g. a dim7 chord, which can be named from any note.
@@ -222,21 +222,27 @@ def first_numeral(matches, tonic, scale):
     for root, shape in matches:
         numeral = numeral_in_key(root, shape, tonic, scale)
         if numeral:
-            return numeral
+            return root, numeral
     return None
 
 
-def chord_numeral(notes, tonic, minor):
-    """The chord's Roman numeral in one key (e.g. 'V7'), or None if it's not in it.
+def fit_in_key(notes, tonic, minor):
+    """How the chord fits one key, as (root, numeral), or None if it doesn't.
 
     `tonic` is the key's pitch class (0 = C) and `minor` is True for a minor key.
     """
     matches = chord_matches(notes)
     if minor:
         # Minor keys use both versions of the 7th, so try both scales.
-        return (first_numeral(matches, tonic, NATURAL_MINOR_SCALE)
-                or first_numeral(matches, tonic, HARMONIC_MINOR_SCALE))
-    return first_numeral(matches, tonic, MAJOR_SCALE)
+        return (first_fit(matches, tonic, NATURAL_MINOR_SCALE)
+                or first_fit(matches, tonic, HARMONIC_MINOR_SCALE))
+    return first_fit(matches, tonic, MAJOR_SCALE)
+
+
+def chord_numeral(notes, tonic, minor):
+    """The chord's Roman numeral in one key (e.g. 'V7'), or None if it's not in it."""
+    fit = fit_in_key(notes, tonic, minor)
+    return fit[1] if fit else None
 
 
 def chord_keys(notes):
@@ -267,3 +273,106 @@ def staff_step(number, spelling=None):
     letter, accidental = spelling or DEFAULT_SPELLING[number % 12]
     octave = (number - accidental) // 12 - 1
     return (octave - 4) * 7 + letter, accidental
+
+
+# The basic chord on each step of a key: numeral -> (half steps from the
+# tonic, chord suffix, its job in the key). Musicians group chords by job:
+#   tonic        - home, restful
+#   predominant  - moves away from home, usually toward the dominant
+#   dominant     - tense, wants to resolve home
+MAJOR_KEY_CHORDS = {
+    "I": (0, "", "tonic: home"),
+    "ii": (2, "m", "predominant: leads to V"),
+    "iii": (4, "m", "tonic family: often goes to vi"),
+    "IV": (5, "", "predominant: leads to V or home"),
+    "V": (7, "", "dominant: wants to resolve to I"),
+    "vi": (9, "m", "tonic family: the relative minor"),
+    "vii°": (11, "dim", "dominant family: resolves to I"),
+}
+# Minor keys mix natural minor (VII) and harmonic minor (V, vii°).
+MINOR_KEY_CHORDS = {
+    "i": (0, "m", "tonic: home"),
+    "ii°": (2, "dim", "predominant: leads to V"),
+    "III": (3, "", "tonic family: the relative major"),
+    "iv": (5, "m", "predominant: leads to V or home"),
+    "V": (7, "", "dominant: wants to resolve to i"),
+    "VI": (8, "", "predominant: often goes to iv or V"),
+    "VII": (10, "", "subtonic: often goes to III"),
+    "vii°": (11, "dim", "dominant family: resolves to i"),
+}
+
+# Where each chord most often goes next, most common first.
+MAJOR_NEXT = {
+    "I": ["IV", "V", "vi"],
+    "ii": ["V", "vii°"],
+    "iii": ["vi", "IV"],
+    "IV": ["V", "I", "ii"],
+    "V": ["I", "vi"],         # V -> vi is the "deceptive cadence": a surprise
+    "vi": ["ii", "IV", "V"],
+    "vii°": ["I"],
+}
+MINOR_NEXT = {
+    "i": ["iv", "V", "VI"],
+    "ii°": ["V"],
+    "III": ["VI", "iv"],
+    "iv": ["V", "i"],
+    "V": ["i", "VI"],
+    "VI": ["iv", "ii°", "V"],
+    "VII": ["III", "i"],
+    "vii°": ["i"],
+}
+
+
+def key_chord_name(tonic, minor, numeral):
+    """Name a key's chord with the key's own letters: IV in Eb major -> 'Ab'."""
+    offset, suffix, _ = (MINOR_KEY_CHORDS if minor else MAJOR_KEY_CHORDS)[numeral]
+    key_name = MINOR_KEY_NAMES[tonic][:-1] if minor else MAJOR_KEY_NAMES[tonic]
+    # A key's scale uses each letter once, starting from the tonic's letter,
+    # so step V of an F# key is 4 letters up from F: C (spelled C#).
+    degree = NUMERALS.index(numeral.upper().rstrip("°"))
+    letter = (LETTERS.index(key_name[0]) + degree) % 7
+    root = (tonic + offset) % 12
+    return spelled_name(letter, accidental_between(root, letter)) + suffix
+
+
+def numeral_on(tonic, minor, root):
+    """Which of the key's basic chords is built on this root, or None."""
+    for numeral, (offset, _, _) in (MINOR_KEY_CHORDS if minor else MAJOR_KEY_CHORDS).items():
+        if (root - tonic) % 12 == offset:
+            return numeral
+    return None
+
+
+def progression(notes, tonic, minor):
+    """What a chord does in a key, and where it usually goes next.
+
+    Returns (numeral, job, next chords), where next chords is a list of
+    (numeral, chord name) pairs. For a G7 in C major:
+    ('V7', 'dominant: wants to resolve to I', [('I', 'C'), ('vi', 'Am')]).
+    Returns None if the chord doesn't fit the key at all.
+    """
+    key_chords = MINOR_KEY_CHORDS if minor else MAJOR_KEY_CHORDS
+    next_table = MINOR_NEXT if minor else MAJOR_NEXT
+
+    fit = fit_in_key(notes, tonic, minor)
+    if fit:
+        root, numeral = fit
+        basic = numeral_on(tonic, minor, root)  # 'V' for a V7 chord
+        _, _, job = key_chords[basic]
+        nexts = [(n, key_chord_name(tonic, minor, n)) for n in next_table[basic]]
+        return numeral, job, nexts
+
+    # Not in the key: is it a "secondary dominant"? A major or dominant 7th
+    # chord whose root is a 5th above one of the key's chords acts as the V
+    # of that chord, borrowed for a moment. G7 in Eb major is V7 of Cm (vi).
+    matches = chord_matches(notes)
+    if not matches:
+        return None
+    root, shape = matches[0]
+    if CHORDS[shape] in ("", "7", "9"):
+        target = numeral_on(tonic, minor, (root + 5) % 12)  # a 5th down = a 4th up
+        if target and key_chords[target][1] != "dim":  # a dim chord can't be "home"
+            numeral = "V" + CHORDS[shape] + "/" + target   # e.g. "V7/vi"
+            job = f"secondary dominant: resolves to {target}"
+            return numeral, job, [(target, key_chord_name(tonic, minor, target))]
+    return None

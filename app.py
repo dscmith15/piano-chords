@@ -4,7 +4,7 @@ import mido
 import pygame
 
 from music import (MAJOR_KEY_NAMES, MINOR_KEY_NAMES, chord_keys, chord_names,
-                   chord_numeral, note_name, note_spellings, staff_step)
+                   note_name, note_spellings, progression, staff_step)
 
 WIDTH, HEIGHT = 800, 480  # the usual resolution of a 5-inch Pi screen
 BACKGROUND = (20, 20, 30)
@@ -270,10 +270,15 @@ while running:
             also = "also " + ", ".join(chords[1:])
             draw_text(screen, also_font, also, DIM_TEXT, (TEXT_X, 160))
         if selected_key and chords:
-            # With a key chosen, show the chord's job in just that key.
-            numeral = chord_numeral(sounding, *selected_key)
-            if numeral:
-                draw_text(screen, numeral_font, numeral, TEXT, (TEXT_X, 260))
+            # With a key chosen, show the chord's job in that key and the
+            # chords that usually come next: "next:  C (I)   Am (vi)".
+            result = progression(sounding, *selected_key)
+            if result:
+                numeral, job, nexts = result
+                draw_text(screen, numeral_font, numeral, TEXT, (TEXT_X, 235))
+                draw_text(screen, keys_font, job, DIM_TEXT, (TEXT_X, 295))
+                suggestions = "   ".join(f"{name} ({n})" for n, name in nexts)
+                draw_text(screen, also_font, "next:  " + suggestions, TEXT, (TEXT_X, 355))
             else:
                 draw_text(screen, keys_font, "not in " + key_label(selected_key),
                           DIM_TEXT, (TEXT_X, 260))
