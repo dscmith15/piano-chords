@@ -226,22 +226,32 @@ def first_numeral(matches, tonic, scale):
     return None
 
 
+def chord_numeral(notes, tonic, minor):
+    """The chord's Roman numeral in one key (e.g. 'V7'), or None if it's not in it.
+
+    `tonic` is the key's pitch class (0 = C) and `minor` is True for a minor key.
+    """
+    matches = chord_matches(notes)
+    if minor:
+        # Minor keys use both versions of the 7th, so try both scales.
+        return (first_numeral(matches, tonic, NATURAL_MINOR_SCALE)
+                or first_numeral(matches, tonic, HARMONIC_MINOR_SCALE))
+    return first_numeral(matches, tonic, MAJOR_SCALE)
+
+
 def chord_keys(notes):
     """The keys this chord belongs to, with its Roman numeral in each.
 
     Returns two lists of (key, numeral) pairs, major keys and minor keys:
     for a C chord, ([('C', 'I'), ('F', 'V'), ('G', 'IV')], [('Dm', 'VII'), ...]).
     """
-    matches = chord_matches(notes)
     major_keys = []
     minor_keys = []
     for tonic in range(12):
-        numeral = first_numeral(matches, tonic, MAJOR_SCALE)
+        numeral = chord_numeral(notes, tonic, minor=False)
         if numeral:
             major_keys.append((MAJOR_KEY_NAMES[tonic], numeral))
-        # Minor keys use both versions of the 7th, so try both scales.
-        numeral = (first_numeral(matches, tonic, NATURAL_MINOR_SCALE)
-                   or first_numeral(matches, tonic, HARMONIC_MINOR_SCALE))
+        numeral = chord_numeral(notes, tonic, minor=True)
         if numeral:
             minor_keys.append((MINOR_KEY_NAMES[tonic], numeral))
     return major_keys, minor_keys

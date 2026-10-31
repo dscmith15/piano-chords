@@ -3,13 +3,19 @@ import os
 import mido
 import pygame
 
-from music import chord_keys, chord_names, note_name, note_spellings, staff_step
+from music import (MAJOR_KEY_NAMES, MINOR_KEY_NAMES, chord_keys, chord_names,
+                   chord_numeral, note_name, note_spellings, staff_step)
 
 WIDTH, HEIGHT = 800, 480  # the usual resolution of a 5-inch Pi screen
 BACKGROUND = (20, 20, 30)
 TEXT = (240, 240, 240)
 DIM_TEXT = (140, 140, 160)
 STAFF_LINES = (110, 110, 130)
+BUTTON = (45, 45, 65)
+BUTTON_SELECTED = (70, 90, 160)
+
+# The button that opens the key picker, under the staff.
+KEY_BUTTON = pygame.Rect(20, 424, 250, 44)
 
 SUSTAIN_PEDAL = 64  # the standard MIDI control number for the sustain pedal
 
@@ -50,6 +56,50 @@ def draw_text(screen, font, text, color, center):
     """Draw text on the screen with its middle at the point `center`."""
     image = font.render(text, True, color)
     screen.blit(image, image.get_rect(center=center))
+
+
+def key_label(key):
+    """Write a key as words: (3, False) -> 'Eb major', (9, True) -> 'A minor'."""
+    tonic, minor = key
+    if minor:
+        return MINOR_KEY_NAMES[tonic][:-1] + " minor"  # [:-1] drops the "m"
+    return MAJOR_KEY_NAMES[tonic] + " major"
+
+
+def draw_button(screen, font, rect, text, selected=False):
+    """A rounded box with text in the middle."""
+    pygame.draw.rect(screen, BUTTON_SELECTED if selected else BUTTON, rect, border_radius=10)
+    draw_text(screen, font, text, TEXT, rect.center)
+
+
+def make_picker_buttons():
+    """The key picker's buttons, as (rectangle, key) pairs.
+
+    Two rows of 6 major keys, then two rows of 6 minor keys, then "No key".
+    A key is (tonic, minor), e.g. (0, False) for C major; "No key" is None.
+    """
+    buttons = []
+    for minor, top in ((False, 70), (True, 230)):
+        for tonic in range(12):
+            row, column = divmod(tonic, 6)  # tonic 7 -> row 1, column 1
+            rect = pygame.Rect(15 + column * 130, top + row * 66, 120, 56)
+            buttons.append((rect, (tonic, minor)))
+    buttons.append((pygame.Rect(300, 400, 200, 56), None))
+    return buttons
+
+
+def draw_picker(screen, font, buttons, selected_key):
+    """The full-screen key picker."""
+    for rect, key in buttons:
+        if key is None:
+            text = "No key"
+        elif key[1]:
+            text = MINOR_KEY_NAMES[key[0]]
+        else:
+            text = MAJOR_KEY_NAMES[key[0]]
+        draw_button(screen, font, rect, text, selected=(key == selected_key))
+    draw_text(screen, font, "Major keys", DIM_TEXT, (WIDTH // 2, 45))
+    draw_text(screen, font, "Minor keys", DIM_TEXT, (WIDTH // 2, 205))
 
 
 def step_y(step):
@@ -136,7 +186,10 @@ chord_font = pygame.font.SysFont(None, 150)
 also_font = pygame.font.SysFont(None, 40)
 keys_font = pygame.font.SysFont(None, 34)
 notes_font = pygame.font.SysFont(None, 44)
+numeral_font = pygame.font.SysFont(None, 90)
+button_font = pygame.font.SysFont(None, 36)
 clock = pygame.time.Clock()
+picker_buttons = make_picker_buttons()
 
 # Make the music symbols once at the start, not again every frame.
 # The above/below sizes are the standard proportions used in printed music.
@@ -155,16 +208,29 @@ held = set()       # keys your fingers are holding down right now
 sustained = set()  # keys you let go of that the pedal is keeping alive
 pedal_down = False
 
+selected_key = None  # None, or (tonic, minor) like (0, False) for C major
+picking = False      # True while the key picker is on screen
+
 port = mido.open_input()
 running = True
 
 while running:
     # 1. Handle window events: closing the window or pressing Escape quits.
+    #    A tap on a touchscreen arrives as a mouse click, so this handles both.
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
         elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
             running = False
+        elif event.type == pygame.MOUSEBUTTONDOWN:
+            if picking:
+                # Choosing a key (or "No key") closes the picker.
+                for rect, key in picker_buttons:
+                    if rect.collidepoint(event.pos):
+                        selected_key = key
+                        picking = False
+            elif KEY_BUTTON.collidepoint(event.pos):
+                picking = True
 
     # 2. Handle every MIDI message that arrived since the last frame.
     #    iter_pending() doesn't wait: if nothing came in, the loop is empty.
@@ -186,8 +252,16 @@ while running:
     # 3. Draw the frame: wipe the screen, then draw what's sounding.
     sounding = held | sustained
     screen.fill(BACKGROUND)
+    if picking:
+        draw_picker(screen, button_font, picker_buttons, selected_key)
+        pygame.display.flip()
+        clock.tick(60)
+        continue  # skip the normal screen while the picker is open
+
     spellings = note_spellings(sounding) if sounding else {}
     draw_staff(screen, symbols, sounding, spellings)
+    key_text = "Key: " + key_label(selected_key) if selected_key else "Key: none"
+    draw_button(screen, button_font, KEY_BUTTON, key_text)
     if sounding:
         chords = chord_names(sounding)
         if chords:
@@ -195,11 +269,20 @@ while running:
         if len(chords) > 1:
             also = "also " + ", ".join(chords[1:])
             draw_text(screen, also_font, also, DIM_TEXT, (TEXT_X, 160))
-        # Major keys in one column, minor keys in the other: "C: I".
-        major_keys, minor_keys = chord_keys(sounding)
-        for keys, x in ((major_keys, TEXT_X - 120), (minor_keys, TEXT_X + 120)):
-            for row, (key, numeral) in enumerate(keys):
-                draw_text(screen, keys_font, f"{key}: {numeral}", DIM_TEXT, (x, 215 + row * 34))
+        if selected_key and chords:
+            # With a key chosen, show the chord's job in just that key.
+            numeral = chord_numeral(sounding, *selected_key)
+            if numeral:
+                draw_text(screen, numeral_font, numeral, TEXT, (TEXT_X, 260))
+            else:
+                draw_text(screen, keys_font, "not in " + key_label(selected_key),
+                          DIM_TEXT, (TEXT_X, 260))
+        else:
+            # No key chosen: list every key the chord fits, "C: I".
+            major_keys, minor_keys = chord_keys(sounding)
+            for keys, x in ((major_keys, TEXT_X - 120), (minor_keys, TEXT_X + 120)):
+                for row, (key, numeral) in enumerate(keys):
+                    draw_text(screen, keys_font, f"{key}: {numeral}", DIM_TEXT, (x, 215 + row * 34))
         names = "  ".join(note_name(n, spellings.get(n % 12)) for n in sorted(sounding))
         draw_text(screen, notes_font, names, TEXT, (TEXT_X, 440))
     pygame.display.flip()  # show the finished frame
