@@ -1,15 +1,37 @@
 """Music theory helpers: note names and chord names from MIDI note numbers."""
 
-# The 12 note names in one octave. A note's position in this list
-# is its MIDI note number % 12 (C = 0, C# = 1, ... B = 11).
-NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+# Notes are written as a letter plus an accidental. Letters are numbered
+# up from C (C=0, D=1, ... B=6), and LETTER_PITCHES is each letter's pitch
+# class with no accidental: the white keys.
+LETTERS = "CDEFGAB"
+LETTER_PITCHES = [0, 2, 4, 5, 7, 9, 11]
+
+# An accidental moves a letter up or down by half steps. Written in text
+# as: bb double flat, b flat, # sharp, x double sharp.
+ACCIDENTAL_TEXT = {-2: "bb", -1: "b", 0: "", 1: "#", 2: "x"}
+
+# Each black key has two names (C# = Db). With no chord to decide, use
+# sharps: (letter, accidental) for pitch classes 0 to 11.
+DEFAULT_SPELLING = [(0, 0), (0, 1), (1, 0), (1, 1), (2, 0), (3, 0),
+                    (3, 1), (4, 0), (4, 1), (5, 0), (5, 1), (6, 0)]
 
 
-def note_name(number):
-    """Turn a MIDI note number into a name like 'C4' (60 -> C4)."""
-    name = NOTE_NAMES[number % 12]
-    octave = number // 12 - 1  # MIDI note 0 is C-1, so subtract 1
-    return f"{name}{octave}"
+def spelled_name(letter, accidental):
+    """Write a spelling as text: (2, -1) -> 'Eb'."""
+    return LETTERS[letter] + ACCIDENTAL_TEXT[accidental]
+
+
+def note_name(number, spelling=None):
+    """Turn a MIDI note number into a name like 'C4' (60 -> C4).
+
+    `spelling` is an optional (letter, accidental) pair, e.g. to write
+    63 as Eb4 instead of D#4.
+    """
+    letter, accidental = spelling or DEFAULT_SPELLING[number % 12]
+    # Octave numbers go with the letter: B#3 sounds the same as C4, so take
+    # the accidental off before working out the octave.
+    octave = (number - accidental) // 12 - 1  # MIDI note 0 is C-1
+    return f"{spelled_name(letter, accidental)}{octave}"
 
 
 # Chord shapes, as half-step distances from the root, mapped to the
@@ -40,6 +62,19 @@ CHORDS = {
     (0, 2, 3, 10): "m9",
 }
 
+# Chords are built by stacking every other letter (C E G B), so each chord
+# tone sits a set number of letters above the root: the 3rd is 2 letters
+# up, the 5th is 4, the 7th is 6. This maps a tone's half steps above the
+# root to how many letters up it must be (9ths fold down to 2nds).
+LETTER_STEPS = {0: 0, 2: 1, 3: 2, 4: 2, 5: 3, 6: 4, 7: 4, 8: 4, 9: 5, 10: 6, 11: 6}
+
+
+def letter_steps(interval, shape):
+    """How many letters above the root this chord tone is written."""
+    if CHORDS[shape] == "dim7" and interval == 9:
+        return 6  # in a dim7 chord this tone is the (double-flat) 7th
+    return LETTER_STEPS[interval]
+
 
 def chord_matches(notes):
     """Every chord these MIDI notes make, as (root, shape) pairs.
@@ -65,9 +100,62 @@ def chord_matches(notes):
     return matches
 
 
+def accidental_between(pitch_class, letter):
+    """The accidental that turns a letter into a pitch class: (3, 'E') -> -1 (Eb)."""
+    # Wrap into -6..5 so going down a half step gives -1, not 11.
+    return (pitch_class - LETTER_PITCHES[letter] + 6) % 12 - 6
+
+
+def spell_chord(root, shape):
+    """Choose letters for a chord's notes, e.g. Eb major -> Eb G Bb.
+
+    Returns {pitch class: (letter, accidental)}. A black-key root is tried
+    as both a sharp and a flat; the other letters follow from it (every
+    other letter), and the spelling with the fewest accidentals wins.
+    """
+    best = None
+    best_score = None
+    for root_letter in range(7):
+        root_accidental = accidental_between(root, root_letter)
+        if abs(root_accidental) > 1:
+            continue  # e.g. Eb can be D# but not Cx
+        if root in LETTER_PITCHES and root_accidental != 0:
+            continue  # a white-key root keeps its own name: C, not B#
+        spelling = {}
+        for interval in shape:
+            letter = (root_letter + letter_steps(interval, shape)) % 7
+            pitch_class = (root + interval) % 12
+            spelling[pitch_class] = (letter, accidental_between(pitch_class, letter))
+
+        score = sum(abs(accidental) for letter, accidental in spelling.values())
+        # On a tie (F# A# C# vs Gb Bb Db), use the usual key name for the root.
+        usual = spelled_name(*spelling[root]) == MAJOR_KEY_NAMES[root]
+        if best is None or score < best_score or (score == best_score and usual):
+            best = spelling
+            best_score = score
+    return best
+
+
 def chord_names(notes):
     """Every name for the chord these MIDI notes make, e.g. ['C6', 'Am7']."""
-    return [NOTE_NAMES[root] + CHORDS[shape] for root, shape in chord_matches(notes)]
+    names = []
+    for root, shape in chord_matches(notes):
+        root_spelling = spell_chord(root, shape)[root]
+        names.append(spelled_name(*root_spelling) + CHORDS[shape])
+    return names
+
+
+def note_spellings(notes):
+    """How to spell each note, from the primary chord they make.
+
+    Returns {pitch class: (letter, accidental)}, or {} when the notes don't
+    make a chord (then the default sharp spellings are used).
+    """
+    matches = chord_matches(notes)
+    if not matches:
+        return {}
+    root, shape = matches[0]
+    return spell_chord(root, shape)
 
 
 # Key names, written the way musicians do: flat keys use flats (Bb, not A#).
@@ -87,12 +175,6 @@ HARMONIC_MINOR_SCALE = (0, 2, 3, 5, 7, 8, 11)
 
 # A chord's Roman numeral is the scale step its root is on.
 NUMERALS = ["I", "II", "III", "IV", "V", "VI", "VII"]
-
-# Chords are built by stacking every other scale note, so each chord tone
-# must sit a set number of scale steps above the root: the 3rd is 2 steps
-# up, the 5th is 4, the 7th is 6. This maps a tone's half steps above the
-# root to how many scale steps up it must be (9ths fold down to 2nds).
-SCALE_STEPS = {0: 0, 2: 1, 3: 2, 4: 2, 5: 3, 6: 4, 7: 4, 8: 4, 9: 5, 10: 6, 11: 6}
 
 # How each chord type is written as a Roman numeral: (lowercase?, ending).
 # Major-sounding chords are UPPERCASE (V), minor-sounding ones lowercase (ii).
@@ -117,19 +199,16 @@ def numeral_in_key(root, shape, tonic, scale):
     if root not in scale_notes:
         return None
     degree = scale_notes.index(root)  # 0 = tonic, 4 = the 5th note, ...
-    suffix = CHORDS[shape]
 
     # Check every chord tone sits on the right scale step above the root.
     # Comparing notes alone isn't enough: in C# minor, A-C-E has the right
     # notes, but its "C" is really B#, a note on the wrong step for a 3rd.
     for interval in shape:
-        steps = SCALE_STEPS[interval]
-        if suffix == "dim7" and interval == 9:
-            steps = 6  # in a dim7 chord this tone is the (double-flat) 7th
+        steps = letter_steps(interval, shape)
         if scale_notes[(degree + steps) % 7] != (root + interval) % 12:
             return None
 
-    lowercase, ending = ROMAN_STYLE[suffix]
+    lowercase, ending = ROMAN_STYLE[CHORDS[shape]]
     numeral = NUMERALS[degree].lower() if lowercase else NUMERALS[degree]
     return numeral + ending
 
@@ -168,20 +247,13 @@ def chord_keys(notes):
     return major_keys, minor_keys
 
 
-# How each pitch class is written on the staff: (letter, accidental).
-# Letters count up from C: C=0, D=1, E=2, F=3, G=4, A=5, B=6.
-# For now black keys are always written as sharps (C# sits on C's spot).
-SHARP_SPELLING = [(0, ""), (0, "#"), (1, ""), (1, "#"), (2, ""), (3, ""),
-                  (3, "#"), (4, ""), (4, "#"), (5, ""), (5, "#"), (6, "")]
-
-
-def staff_step(number):
+def staff_step(number, spelling=None):
     """Where a note sits on the grand staff, and its accidental.
 
     The step counts lines AND spaces above middle C, so each letter is one
     step: C4 = 0, D4 = 1, E4 = 2 (the treble staff's bottom line), B3 = -1.
-    The black keys share a step with the note below: C#4 is (0, '#').
+    A sharp or flat sits on its letter's step: C#4 is (0, 1), Db4 is (1, -1).
     """
-    letter, accidental = SHARP_SPELLING[number % 12]
-    octave = number // 12 - 1
+    letter, accidental = spelling or DEFAULT_SPELLING[number % 12]
+    octave = (number - accidental) // 12 - 1
     return (octave - 4) * 7 + letter, accidental

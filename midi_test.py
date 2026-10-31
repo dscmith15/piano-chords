@@ -1,6 +1,6 @@
 import mido
 
-from music import chord_names, note_name
+from music import chord_names, note_name, note_spellings
 
 
 def show(notes):
@@ -8,7 +8,8 @@ def show(notes):
     if not notes:
         print("(silence)")
         return
-    names = " ".join(note_name(n) for n in sorted(notes))
+    spellings = note_spellings(notes)
+    names = " ".join(note_name(n, spellings.get(n % 12)) for n in sorted(notes))
     chords = chord_names(notes)
     if not chords:
         print(names)

@@ -3,7 +3,7 @@ import os
 import mido
 import pygame
 
-from music import chord_keys, chord_names, note_name, staff_step
+from music import chord_keys, chord_names, note_name, note_spellings, staff_step
 
 WIDTH, HEIGHT = 800, 480  # the usual resolution of a 5-inch Pi screen
 BACKGROUND = (20, 20, 30)
@@ -70,8 +70,11 @@ def draw_symbol(screen, symbol, x, step):
     screen.blit(image, (x, step_y(step) - above))
 
 
-def draw_staff(screen, symbols, notes):
-    """Draw the grand staff with these MIDI notes on it."""
+def draw_staff(screen, symbols, notes, spellings):
+    """Draw the grand staff with these MIDI notes on it.
+
+    `spellings` says which letter to write each note as (from note_spellings).
+    """
     for step in TREBLE_LINES + BASS_LINES:
         y = step_y(step)
         pygame.draw.line(screen, STAFF_LINES, (STAFF_LEFT, y), (STAFF_RIGHT, y), 2)
@@ -80,9 +83,9 @@ def draw_staff(screen, symbols, notes):
 
     previous_step = None
     shifted = False
-    accidentals = []  # (step, sign) pairs, drawn after the notes
+    accidentals = []  # (step, accidental) pairs, drawn after the notes
     for number in sorted(notes):
-        step, accidental = staff_step(number)
+        step, accidental = staff_step(number, spellings.get(number % 12))
 
         # Notes one step apart (like C and D) would overlap, so the upper
         # one moves to the right side of the stem, the way printed music does.
@@ -141,8 +144,11 @@ music_font = pygame.font.Font(MUSIC_FONT, 200)
 symbols = {
     "treble": make_symbol(music_font, "\U0001D11E", 4.4, 2.6),  # 𝄞
     "bass": make_symbol(music_font, "\U0001D122", 1.05, 2.55),  # 𝄢
-    "#": make_symbol(music_font, "♯", 1.4, 1.4),           # ♯
-    "b": make_symbol(music_font, "♭", 1.75, 0.7),          # ♭
+    # Accidentals, keyed by how many half steps they move a note.
+    1: make_symbol(music_font, "♯", 1.4, 1.4),             # ♯ sharp
+    -1: make_symbol(music_font, "♭", 1.75, 0.7),           # ♭ flat
+    2: make_symbol(music_font, "\U0001D12A", 0.5, 0.5),         # 𝄪 double sharp
+    -2: make_symbol(music_font, "\U0001D12B", 1.75, 0.7),       # 𝄫 double flat
 }
 
 held = set()       # keys your fingers are holding down right now
@@ -180,7 +186,8 @@ while running:
     # 3. Draw the frame: wipe the screen, then draw what's sounding.
     sounding = held | sustained
     screen.fill(BACKGROUND)
-    draw_staff(screen, symbols, sounding)
+    spellings = note_spellings(sounding) if sounding else {}
+    draw_staff(screen, symbols, sounding, spellings)
     if sounding:
         chords = chord_names(sounding)
         if chords:
@@ -193,7 +200,7 @@ while running:
         for keys, x in ((major_keys, TEXT_X - 120), (minor_keys, TEXT_X + 120)):
             for row, (key, numeral) in enumerate(keys):
                 draw_text(screen, keys_font, f"{key}: {numeral}", DIM_TEXT, (x, 215 + row * 34))
-        names = "  ".join(note_name(n) for n in sorted(sounding))
+        names = "  ".join(note_name(n, spellings.get(n % 12)) for n in sorted(sounding))
         draw_text(screen, notes_font, names, TEXT, (TEXT_X, 440))
     pygame.display.flip()  # show the finished frame
 
