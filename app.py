@@ -59,19 +59,60 @@ BASS_LINES = [-10, -8, -6, -4, -2]
 # next to this file so the app works whatever folder you run it from.
 MUSIC_FONT = os.path.join(os.path.dirname(__file__), "fonts", "NotoMusic-Regular.ttf")
 
+# The splash screen: shown for SPLASH_MS milliseconds, then fades out over
+# FADE_MS. If you put a logo.png next to app.py, it's used as the logo;
+# otherwise a treble clef on a staff is drawn instead.
+LOGO_FILE = os.path.join(os.path.dirname(__file__), "logo.png")
+SPLASH_MS = 2000
+FADE_MS = 500
 
-def make_symbol(font, char, above, below):
-    """Render a music symbol sized to the staff.
+
+def make_symbol(font, char, above, below, space=SPACE):
+    """Render a music symbol sized to a staff.
 
     `above` and `below` say how many staff spaces it reaches above and
     below the point it's lined up on (for a treble clef, the G line).
+    `space` is the staff's line spacing in pixels.
     Returns the image and how many pixels of it sit above that point.
     """
     image = font.render(char, True, TEXT)
     image = image.subsurface(image.get_bounding_rect())  # trim empty edges
-    height = round((above + below) * SPACE)
+    height = round((above + below) * space)
     width = round(image.get_width() * height / image.get_height())
-    return pygame.transform.smoothscale(image, (width, height)), round(above * SPACE)
+    return pygame.transform.smoothscale(image, (width, height)), round(above * space)
+
+
+def make_splash(music_font, title_font, small_font):
+    """Draw the splash screen once, onto its own full-screen image."""
+    # 24 bits = red, green and blue only, no per-pixel see-through value.
+    # (A plain Surface copies the window's format, which on a Mac includes
+    # one; drawing text on it then punches see-through holes in the splash.)
+    # Without it, set_alpha() below fades the whole image evenly.
+    splash = pygame.Surface((WIDTH, HEIGHT), 0, 24)
+    splash.fill(BACKGROUND)
+
+    if os.path.exists(LOGO_FILE):
+        # Your own logo: shrink (or grow) it to fit a 360 x 260 box,
+        # keeping its shape. convert_alpha() keeps see-through parts.
+        logo = pygame.image.load(LOGO_FILE).convert_alpha()
+        scale = min(360 / logo.get_width(), 260 / logo.get_height())
+        size = (round(logo.get_width() * scale), round(logo.get_height() * scale))
+        logo = pygame.transform.smoothscale(logo, size)
+        splash.blit(logo, logo.get_rect(center=(WIDTH // 2, 180)))
+    else:
+        # The drawn logo: a big treble clef on five staff lines.
+        space = 26
+        g_line = 220  # the y position of the G line the clef curls around
+        for line in range(-3, 2):  # F D B G E, top to bottom
+            y = g_line + line * space
+            pygame.draw.line(splash, STAFF_LINES, (WIDTH // 2 - 150, y), (WIDTH // 2 + 150, y), 3)
+        clef, above = make_symbol(music_font, "\U0001D11E", 4.4, 2.6, space)
+        splash.blit(clef, (WIDTH // 2 - clef.get_width() // 2, g_line - above))
+
+    draw_text(splash, title_font, "Piano Chords", TEXT, (WIDTH // 2, 365))
+    draw_text(splash, small_font, "notes, chords, keys and scales as you play",
+              DIM_TEXT, (WIDTH // 2, 420))
+    return splash
 
 
 def draw_text(screen, font, text, color, center):
@@ -304,6 +345,10 @@ symbols = {
     -2: make_symbol(music_font, "\U0001D12B", 1.75, 0.7),       # 𝄫 double flat
 }
 
+title_font = pygame.font.SysFont(None, 80)
+splash = make_splash(music_font, title_font, keys_font)
+splash_done = False  # becomes True when the splash has faded out (or was tapped)
+
 held = set()       # keys your fingers are holding down right now
 sustained = set()  # keys you let go of that the pedal is keeping alive
 pedal_down = False
@@ -341,7 +386,9 @@ while running:
         elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
             running = False
         elif event.type == pygame.MOUSEBUTTONDOWN:
-            if picking:
+            if not splash_done:
+                splash_done = True  # a tap skips the splash (and does nothing else)
+            elif picking:
                 # Choosing a key (or "No key") closes the picker.
                 for rect, key in picker_buttons:
                     if rect.collidepoint(event.pos):
@@ -442,6 +489,18 @@ while running:
                     draw_text(screen, keys_font, f"{key}: {numeral}", DIM_TEXT, (x, 215 + row * 34))
         names = "  ".join(note_name(n, spellings.get(n % 12)) for n in sorted(sounding))
         draw_text(screen, notes_font, names, TEXT, (TEXT_X, 446))
+
+    # 4. The splash screen, drawn over the finished frame. During the fade
+    #    it gets more see-through, so the app appears underneath it.
+    if not splash_done:
+        if now < SPLASH_MS:
+            splash.set_alpha(255)  # 255 = solid, 0 = invisible
+        elif now < SPLASH_MS + FADE_MS:
+            splash.set_alpha(round(255 * (1 - (now - SPLASH_MS) / FADE_MS)))
+        else:
+            splash_done = True
+        if not splash_done:
+            screen.blit(splash, (0, 0))
     pygame.display.flip()  # show the finished frame
 
     clock.tick(60)  # wait so the loop runs at most 60 times a second
