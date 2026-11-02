@@ -48,6 +48,8 @@ CHORDS = {
     (0, 3, 7, 10): "m7",      # minor 7th: minor triad + minor 7th
     (0, 3, 6, 9): "dim7",     # diminished 7th: stacked minor 3rds
     (0, 3, 6, 10): "m7b5",    # half-diminished: dim triad + minor 7th
+    (0, 3, 7, 11): "mMaj7",   # minor-major 7th: minor triad + major 7th
+    (0, 3, 6, 11): "dimMaj7",  # diminished-major 7th: dim triad + major 7th
     (0, 4, 7, 9): "6",        # major 6th: major triad + major 6th
     (0, 3, 7, 9): "m6",       # minor 6th: minor triad + major 6th
     # A 9th is an octave + a 2nd (14 half steps); % 12 folds it to 2.
@@ -209,6 +211,7 @@ ROMAN_STYLE = {
     "7": (False, "7"),        "maj7": (False, "maj7"),
     "m7": (True, "7"),        "dim7": (True, "°7"),
     "m7b5": (True, "ø7"),
+    "mMaj7": (True, "maj7"),  "dimMaj7": (True, "°maj7"),
     "6": (False, "add6"),     "m6": (True, "add6"),
     "add9": (False, "add9"),  "madd9": (True, "add9"),
     "9": (False, "9"),        "maj9": (False, "maj9"),
@@ -487,8 +490,29 @@ OTHER_SCALES = {
     "whole tone": [(0, 0), (2, 1), (4, 2), (6, 3), (8, 4), (10, 5)],
 }
 # The order the Scale button steps through. "key" means the key's own scale;
-# "improvise" means notes to play over whatever chord the left hand holds.
-SCALE_NAMES = ["key", "improvise"] + list(OTHER_SCALES)
+# "improvise" means notes to play over whatever chord the left hand holds,
+# and "improvise (spicy)" picks tenser scales where there are some.
+SCALE_NAMES = ["key", "improvise", "improvise (spicy)"] + list(OTHER_SCALES)
+
+
+def spell_scale(root, root_letter, steps):
+    """Spell a scale from its root, given as (half steps, letters) pairs.
+
+    Returns [(pitch class, name), ...]: C with the blues scale's steps
+    gives [(0, 'C'), (3, 'Eb'), (5, 'F'), (6, 'Gb'), (7, 'G'), (10, 'Bb')].
+    """
+    notes = []
+    for half_steps, letters in steps:
+        pitch_class = (root + half_steps) % 12
+        letter = (root_letter + letters) % 7
+        accidental = accidental_between(pitch_class, letter)
+        if abs(accidental) == 2:
+            # Strict letters can give a double sharp or flat (Eb blues' blue
+            # note would be Bbb); players write the simpler name (A) instead.
+            letter = (letter + (1 if accidental > 0 else -1)) % 7
+            accidental = accidental_between(pitch_class, letter)
+        notes.append((pitch_class, spelled_name(letter, accidental)))
+    return notes
 
 
 def scale_for(tonic, minor, scale_name):
@@ -498,18 +522,8 @@ def scale_for(tonic, minor, scale_name):
     """
     if scale_name == "key":
         return key_scale(tonic, minor)
-    notes = []
-    for half_steps, letters in OTHER_SCALES[scale_name]:
-        pitch_class = (tonic + half_steps) % 12
-        letter = (tonic_letter(tonic, minor) + letters) % 7
-        accidental = accidental_between(pitch_class, letter)
-        if abs(accidental) == 2:
-            # Strict letters can give a double sharp or flat (Eb blues' blue
-            # note would be Bbb); players write the simpler name (A) instead.
-            letter = (letter + (1 if accidental > 0 else -1)) % 7
-            accidental = accidental_between(pitch_class, letter)
-        notes.append((pitch_class, spelled_name(letter, accidental), False))
-    return notes
+    notes = spell_scale(tonic, tonic_letter(tonic, minor), OTHER_SCALES[scale_name])
+    return [(pitch_class, name, False) for pitch_class, name in notes]
 
 
 # Modes: a 7-note scale started from a different note. In C major, starting
@@ -530,62 +544,119 @@ MODES = {
 }
 
 
-def improv_scale(notes, key):
+def one_letter_each(half_steps):
+    """Steps for a 7-note scale, which uses each letter once, in order."""
+    return [(steps, letters) for letters, steps in enumerate(half_steps)]
+
+
+# Chords from outside the key have no key scale to borrow from, so each
+# chord type gets the scale jazz players usually reach for. Like your
+# teacher's sheet: Fm(maj7) -> F melodic minor, Cdim(maj7) -> C WH-diminished.
+LYDIAN = ("Lydian", one_letter_each((0, 2, 4, 6, 7, 9, 11)))  # major, raised 4th
+DORIAN = ("Dorian", one_letter_each((0, 2, 3, 5, 7, 9, 10)))  # minor, raised 6th
+MIXOLYDIAN = ("Mixolydian", one_letter_each((0, 2, 4, 5, 7, 9, 10)))  # major, flat 7th
+LOCRIAN_SHARP_2 = ("Locrian #2", one_letter_each((0, 2, 3, 5, 6, 8, 10)))
+MELODIC_MINOR = ("melodic minor", one_letter_each((0, 2, 3, 5, 7, 9, 11)))
+WH_DIMINISHED = ("WH-diminished", OTHER_SCALES["whole-half diminished"])
+HW_DIMINISHED = ("HW-diminished", OTHER_SCALES["half-whole diminished"])
+WHOLE_TONE = ("whole tone", OTHER_SCALES["whole tone"])
+
+CHORD_TYPE_SCALES = {
+    # Major chords: Lydian, since its raised 4th has no clash with the 3rd.
+    "": LYDIAN, "maj7": LYDIAN, "maj9": LYDIAN, "6": LYDIAN, "add9": LYDIAN,
+    "m": DORIAN, "m7": DORIAN, "m9": DORIAN, "m6": DORIAN, "madd9": DORIAN,
+    "7": MIXOLYDIAN, "9": MIXOLYDIAN, "sus2": MIXOLYDIAN, "sus4": MIXOLYDIAN,
+    # Locrian with a natural 2nd: plain Locrian's b2 clashes with the root.
+    "m7b5": LOCRIAN_SHARP_2,
+    "mMaj7": MELODIC_MINOR,
+    "dim": WH_DIMINISHED, "dim7": WH_DIMINISHED, "dimMaj7": WH_DIMINISHED,
+    "aug": WHOLE_TONE,
+}
+
+# Spicier choices for "improvise (spicy)": more tension to resolve. HW-
+# diminished over a dominant 7th adds the b9, #9 and #11, like your
+# teacher's C7 (it has no natural 9th, so it doesn't suit 9 chords).
+SPICY_SCALES = {"7": HW_DIMINISHED}
+
+
+def key_swap_scale(root, root_letter, chord, key):
+    """The key's scale with the chord's notes swapped in, from the root.
+
+    Each chord tone replaces the key's note on the same letter: over A7
+    in C major, C# replaces C. Returns (mode name, [(pitch class, name)]).
+    """
+    tonic, minor = key
+    scale = NATURAL_MINOR_SCALE if minor else MAJOR_SCALE
+    letters = {}  # letter -> pitch class: letters[2] is the key's E (or Eb...)
+    for degree, offset in enumerate(scale):
+        letters[(tonic_letter(tonic, minor) + degree) % 7] = (tonic + offset) % 12
+    for pitch_class, (letter, accidental) in chord.items():
+        letters[letter] = pitch_class
+
+    notes = []
+    for step in range(7):
+        letter = (root_letter + step) % 7
+        pitch_class = letters[letter]
+        notes.append((pitch_class, spelled_name(letter, accidental_between(pitch_class, letter))))
+    pattern = tuple((pitch_class - root) % 12 for pitch_class, name in notes)
+    return MODES.get(pattern, "scale"), notes
+
+
+def improv_scale(notes, key, spicy=False):
     """Notes to improvise with over a chord, in a key.
 
-    Start from the key's scale (one note per letter) and swap in the
-    chord's own notes: over A7 in C major, C# replaces C. Then start the
-    scale on the chord's root, and give each note a role:
+    Chords in the key (and secondary dominants) use the key's scale with
+    the chord's notes swapped in, started on the chord's root: that gives
+    D Dorian over Dm7 in C major. Other chords use CHORD_TYPE_SCALES.
+    With spicy=True, chord types in SPICY_SCALES use that scale instead.
+    Each note gets a role:
       "chord"  - a chord tone: the safest notes to land on
       "color"  - another scale note: adds flavour (9ths, 11ths, 13ths)
       "avoid"  - a half step above a chord tone: it clashes if you hold
                  it, but is fine to pass through on the way somewhere
     Returns (title, [(pitch class, name, role), ...]), e.g. for Dm7 in
     C major: ('D Dorian', [(2, 'D', 'chord'), (4, 'E', 'color'), ...]).
-    Returns None for a chord that isn't in the key or a secondary dominant.
+    Returns None if the notes don't make a chord.
     """
-    in_key = chord_in_key(notes, key)
-    if not in_key:
+    matches = chord_matches(notes)
+    if not matches:
         return None
-    root, shape, root_letter = in_key
-    tonic, minor = key
-
-    # The key's scale, by letter: letters[2] is the key's E (or Eb, E#...).
-    scale = NATURAL_MINOR_SCALE if minor else MAJOR_SCALE
-    letters = {}
-    for degree, offset in enumerate(scale):
-        letters[(tonic_letter(tonic, minor) + degree) % 7] = (tonic + offset) % 12
-    # Swap in the chord's notes. Each chord tone has a letter, and it
-    # replaces the key's note on that letter.
+    in_key = chord_in_key(notes, key)
+    if in_key:
+        root, shape, root_letter = in_key
+    else:
+        root, shape = matches[0]
+        root_letter = spell_chord(root, shape)[root][0]
     chord = spell_from_letter(root, shape, root_letter)
-    for pitch_class, (letter, accidental) in chord.items():
-        letters[letter] = pitch_class
+    chord_type = CHORDS[shape]
 
-    # Walk up the letters from the chord's root.
-    scale_letters = [(root_letter + step) % 7 for step in range(7)]
-    pattern = tuple((letters[letter] - root) % 12 for letter in scale_letters)
+    if spicy and chord_type in SPICY_SCALES:
+        mode, steps = SPICY_SCALES[chord_type]
+        scale = spell_scale(root, root_letter, steps)
+    elif in_key:
+        mode, scale = key_swap_scale(root, root_letter, chord, key)
+    else:
+        mode, steps = CHORD_TYPE_SCALES[chord_type]
+        scale = spell_scale(root, root_letter, steps)
 
     # Usually a note a half step above a chord tone clashes. Dominant
     # scales (a major 3rd and a minor 7th, like G7's) are the exception:
     # there the b9 and b13 are wanted tension, so only the 11th clashes.
+    pattern = {(pitch_class - root) % 12 for pitch_class, name in scale}
     dominant = 4 in pattern and 10 in pattern
     clashes_with = {(root + 4) % 12} if dominant else set(chord)
 
     result = []
-    for letter in scale_letters:
-        pitch_class = letters[letter]
+    for pitch_class, name in scale:
         if pitch_class in chord:
             role = "chord"
         elif (pitch_class - 1) % 12 in clashes_with:
             role = "avoid"
         else:
             role = "color"
-        name = spelled_name(letter, accidental_between(pitch_class, letter))
         result.append((pitch_class, name, role))
+    return scale[0][1] + " " + mode, result
 
-    root_name = result[0][1]
-    title = root_name + " " + MODES.get(pattern, "scale")
-    return title, result
 
 # Intervals: the distance between two notes, by half steps within an
 # octave -> (name, how many letters apart). C up to E is 4 half steps and

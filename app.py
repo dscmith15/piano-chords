@@ -55,6 +55,7 @@ CLEF_X = 28             # where the clefs start
 NOTE_X = 170            # where the chord's note heads go
 NOTE_W, NOTE_H = 20, 15  # note head size
 TEXT_X = 540            # the middle of the text area
+TEXT_ROOM = 500         # the widest text that fits there (with a margin)
 
 # The staff lines, as steps: E G B D F in treble, G B D F A in bass.
 TREBLE_LINES = [2, 4, 6, 8, 10]
@@ -330,6 +331,7 @@ pygame.init()
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Piano Chords")
 chord_font = pygame.font.SysFont(None, 150)
+narrow_chord_font = pygame.font.SysFont(None, 120)  # for long names like EbdimMaj7
 also_font = pygame.font.SysFont(None, 40)
 keys_font = pygame.font.SysFont(None, 34)
 notes_font = pygame.font.SysFont(None, 44)
@@ -446,30 +448,26 @@ while running:
     if selected_key:
         scale_name = SCALE_NAMES[scale_index]
         playing = {n % 12 for n in sounding}
-        if scale_name == "improvise":
+        if scale_name.startswith("improvise"):
             # Notes to play over the chord your left hand last held. Keeping
             # the last chord means the suggestions stay when you lift it.
+            spicy = scale_name == "improvise (spicy)"
             left_hand = {n for n in sounding if n < SPLIT_NOTE}
             if left_hand and chord_matches(left_hand):
                 improv_chord = left_hand
-            improv = improv_scale(improv_chord, selected_key) if improv_chord else None
-            if improv:
-                mode, improv_notes = improv
+            if improv_chord:
+                mode, improv_notes = improv_scale(improv_chord, selected_key, spicy)
                 chord_tones = {pc for pc, name, role in improv_notes if role == "chord"}
                 color = {pc for pc, name, role in improv_notes if role == "color"}
                 avoid = {pc for pc, name, role in improv_notes if role == "avoid"}
                 draw_keyboard(screen, chord_tones | color, set(), chord_tones, avoid)
-                title = "Over " + chord_names(improv_chord, selected_key)[0] + ": " + mode
+                chord_name = chord_names(improv_chord, selected_key)[0]
+                title = ("Spicy over " if spicy else "Over ") + chord_name + ": " + mode
                 words = [(name, ROLE_COLORS[role]) for pc, name, role in improv_notes]
             else:
                 draw_keyboard(screen, set(), set(), playing)
-                if improv_chord:
-                    # A chord outside the key. These get their own scales next.
-                    title = "Over " + chord_names(improv_chord, selected_key)[0]
-                    words = [("no suggestion for this chord yet", DIM_TEXT)]
-                else:
-                    title = "Improvise"
-                    words = [("hold a chord below middle C", DIM_TEXT)]
+                title = "Spicy improvise" if spicy else "Improvise"
+                words = [("hold a chord below middle C", DIM_TEXT)]
         else:
             # The chosen scale, on the mini keyboard and as a row of names.
             # Notes you're playing are blue (orange if they're outside the scale).
@@ -487,20 +485,23 @@ while running:
                 words.append((text, IN_CHORD if pc in playing else TEXT))
 
         pygame.draw.rect(screen, BUTTON, SCALE_BUTTON, border_radius=10)
-        draw_text(screen, small_font, title + "   (tap to change)", DIM_TEXT,
-                  (SCALE_BUTTON.centerx, SCALE_BUTTON.top + 16))
+        # Add the hint when there's room; long titles go without it.
+        if small_font.size(title + "   (tap to change)")[0] <= SCALE_BUTTON.width - 20:
+            title += "   (tap to change)"
+        draw_text(screen, small_font, title, DIM_TEXT, (SCALE_BUTTON.centerx, SCALE_BUTTON.top + 16))
         draw_text_row(screen, keys_font, words, (SCALE_BUTTON.centerx, SCALE_BUTTON.top + 46))
     # What the big chord name describes: every note you're playing, or in
     # improvise mode the left hand's chord, so a melody on top doesn't
     # change it and it stays after you lift your hand.
     named = sounding
-    if selected_key and SCALE_NAMES[scale_index] == "improvise" and improv_chord:
+    if selected_key and SCALE_NAMES[scale_index].startswith("improvise") and improv_chord:
         named = improv_chord
     if named:
         chords = chord_names(named, selected_key)
         interval = interval_name(named)
         if chords:
-            draw_text(screen, chord_font, chords[0], TEXT, (TEXT_X, 80))
+            font = chord_font if chord_font.size(chords[0])[0] <= TEXT_ROOM else narrow_chord_font
+            draw_text(screen, font, chords[0], TEXT, (TEXT_X, 80))
         elif interval:
             # Two notes aren't a chord, so name the distance between them.
             draw_text(screen, numeral_font, interval, TEXT, (TEXT_X, 80))
