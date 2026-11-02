@@ -486,8 +486,9 @@ OTHER_SCALES = {
     # Six notes, all a whole step apart: dreamy, fits augmented chords.
     "whole tone": [(0, 0), (2, 1), (4, 2), (6, 3), (8, 4), (10, 5)],
 }
-# The order the Scale button steps through. "key" means the key's own scale.
-SCALE_NAMES = ["key"] + list(OTHER_SCALES)
+# The order the Scale button steps through. "key" means the key's own scale;
+# "improvise" means notes to play over whatever chord the left hand holds.
+SCALE_NAMES = ["key", "improvise"] + list(OTHER_SCALES)
 
 
 def scale_for(tonic, minor, scale_name):
@@ -509,6 +510,82 @@ def scale_for(tonic, minor, scale_name):
             accidental = accidental_between(pitch_class, letter)
         notes.append((pitch_class, spelled_name(letter, accidental), False))
     return notes
+
+
+# Modes: a 7-note scale started from a different note. In C major, starting
+# on D gives D Dorian, on G gives G Mixolydian. Each mode has its own
+# pattern of half steps above its first note, so the pattern names it.
+MODES = {
+    (0, 2, 4, 5, 7, 9, 11): "major",                # also called Ionian
+    (0, 2, 3, 5, 7, 9, 10): "Dorian",
+    (0, 1, 3, 5, 7, 8, 10): "Phrygian",
+    (0, 2, 4, 6, 7, 9, 11): "Lydian",
+    (0, 2, 4, 5, 7, 9, 10): "Mixolydian",
+    (0, 2, 3, 5, 7, 8, 10): "Aeolian",              # the natural minor scale
+    (0, 1, 3, 5, 6, 8, 10): "Locrian",
+    # Modes you get by swapping a borrowed chord's notes into the key:
+    (0, 2, 4, 5, 7, 8, 10): "Aeolian dominant",    # A7 in C major
+    (0, 1, 4, 5, 7, 8, 10): "Phrygian dominant",   # E7 in C major or A minor
+    (0, 2, 3, 5, 7, 8, 11): "harmonic minor",
+}
+
+
+def improv_scale(notes, key):
+    """Notes to improvise with over a chord, in a key.
+
+    Start from the key's scale (one note per letter) and swap in the
+    chord's own notes: over A7 in C major, C# replaces C. Then start the
+    scale on the chord's root, and give each note a role:
+      "chord"  - a chord tone: the safest notes to land on
+      "color"  - another scale note: adds flavour (9ths, 11ths, 13ths)
+      "avoid"  - a half step above a chord tone: it clashes if you hold
+                 it, but is fine to pass through on the way somewhere
+    Returns (title, [(pitch class, name, role), ...]), e.g. for Dm7 in
+    C major: ('D Dorian', [(2, 'D', 'chord'), (4, 'E', 'color'), ...]).
+    Returns None for a chord that isn't in the key or a secondary dominant.
+    """
+    in_key = chord_in_key(notes, key)
+    if not in_key:
+        return None
+    root, shape, root_letter = in_key
+    tonic, minor = key
+
+    # The key's scale, by letter: letters[2] is the key's E (or Eb, E#...).
+    scale = NATURAL_MINOR_SCALE if minor else MAJOR_SCALE
+    letters = {}
+    for degree, offset in enumerate(scale):
+        letters[(tonic_letter(tonic, minor) + degree) % 7] = (tonic + offset) % 12
+    # Swap in the chord's notes. Each chord tone has a letter, and it
+    # replaces the key's note on that letter.
+    chord = spell_from_letter(root, shape, root_letter)
+    for pitch_class, (letter, accidental) in chord.items():
+        letters[letter] = pitch_class
+
+    # Walk up the letters from the chord's root.
+    scale_letters = [(root_letter + step) % 7 for step in range(7)]
+    pattern = tuple((letters[letter] - root) % 12 for letter in scale_letters)
+
+    # Usually a note a half step above a chord tone clashes. Dominant
+    # scales (a major 3rd and a minor 7th, like G7's) are the exception:
+    # there the b9 and b13 are wanted tension, so only the 11th clashes.
+    dominant = 4 in pattern and 10 in pattern
+    clashes_with = {(root + 4) % 12} if dominant else set(chord)
+
+    result = []
+    for letter in scale_letters:
+        pitch_class = letters[letter]
+        if pitch_class in chord:
+            role = "chord"
+        elif (pitch_class - 1) % 12 in clashes_with:
+            role = "avoid"
+        else:
+            role = "color"
+        name = spelled_name(letter, accidental_between(pitch_class, letter))
+        result.append((pitch_class, name, role))
+
+    root_name = result[0][1]
+    title = root_name + " " + MODES.get(pattern, "scale")
+    return title, result
 
 # Intervals: the distance between two notes, by half steps within an
 # octave -> (name, how many letters apart). C up to E is 4 half steps and
