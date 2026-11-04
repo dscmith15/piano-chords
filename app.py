@@ -3,9 +3,10 @@ import os
 import mido
 import pygame
 
-from music import (MAJOR_KEY_NAMES, MINOR_KEY_NAMES, chord_keys, chord_matches,
-                   chord_names, improv_scale, SCALE_NAMES, interval_name, note_name,
-                   note_spellings, progression, scale_for, staff_step)
+from music import (MAJOR_KEY_NAMES, MINOR_KEY_NAMES, chord_intervals, chord_keys,
+                   chord_matches, chord_names, chord_position, chord_voicing,
+                   improv_scale, SCALE_NAMES, interval_name, note_name, note_spellings,
+                   primary_chord, progression, scale_for, spelled_name, staff_step)
 
 WIDTH, HEIGHT = 800, 480  # the usual resolution of a 5-inch Pi screen
 BACKGROUND = (20, 20, 30)
@@ -41,8 +42,8 @@ SCALE_BUTTON = pygame.Rect(404, 274, 388, 60)  # tap it to show the next scale
 # whole row. union() makes the smallest Rect covering both.
 WIDE_CARD = NEXT_CARD.union(SCALE_BUTTON)
 NAME_X = CHORD_CARD.left + 16  # the chord name's left edge
-NAME_ROOM = 272                # how wide the chord name can be
-DETAILS_LEFT, DETAILS_RIGHT = 310, 476  # the details column in the chord card
+NAME_ROOM = 226                # how wide the chord name can be
+DETAILS_LEFT, DETAILS_RIGHT = 268, 476  # the details column in the chord card
 
 # The full keyboard along the bottom: all 88 keys, A0 (MIDI 21) to C8 (108).
 KEYBOARD = pygame.Rect(8, 342, 784, 130)
@@ -162,14 +163,14 @@ def draw_card(screen, rect):
     pygame.draw.rect(screen, CARD, rect, border_radius=12)
 
 
-def draw_detail(screen, label_font, value_font, row, label, value):
+def draw_detail(screen, label_font, value_font, row, label, value, color=TEXT):
     """One row of the chord card's details: a label on the left, its value
-    on the right."""
+    on the right (in `color`)."""
     y = CHORD_CARD.top + 26 + row * 32
     draw_text(screen, label_font, label, DIM_TEXT, (DETAILS_LEFT, y), "midleft")
     room = DETAILS_RIGHT - DETAILS_LEFT - label_font.size(label)[0] - 12
     value = fit_text(value_font, value, room)
-    draw_text(screen, value_font, value, TEXT, (DETAILS_RIGHT, y), "midright")
+    draw_text(screen, value_font, value, color, (DETAILS_RIGHT, y), "midright")
 
 
 def key_label(key):
@@ -625,16 +626,28 @@ while running:
             also = fit_text(small_font, "also " + ", ".join(chords[1:]), NAME_ROOM)
             draw_text(screen, small_font, also, DIM_TEXT, (NAME_X, CHORD_CARD.top + 104), "midleft")
 
-        # The details column: the note names (no octaves, lowest first,
-        # each letter once) and how many notes there are.
+        # The details column. For a chord: which tone is in the bass, how
+        # spread out it is, its root, and each tone's job ("R 3 5 b7").
         named_spellings = note_spellings(named, selected_key)
+        chord = primary_chord(named, selected_key)
+        if chord:
+            root, shape = chord
+            draw_detail(screen, label_font, small_font, 0, "Position",
+                        chord_position(named, root, shape))
+            draw_detail(screen, label_font, small_font, 1, "Voicing", chord_voicing(named))
+            draw_detail(screen, label_font, small_font, 2, "Root",
+                        spelled_name(*named_spellings[root]), IN_CHORD)
+            draw_detail(screen, label_font, small_font, 3, "Intervals",
+                        " ".join(chord_intervals(shape)))
+        # For any notes: their names (no octaves, lowest first, each letter
+        # once) and how many there are.
         letters = []
         for n in sorted(named):
             name = note_name(n, named_spellings.get(n % 12))[:-1]  # [:-1] drops the octave
             if name not in letters:
                 letters.append(name)
-        draw_detail(screen, label_font, small_font, 0, "Spelled", " ".join(letters))
-        draw_detail(screen, label_font, small_font, 1, "Notes held", str(len(named)))
+        draw_detail(screen, label_font, small_font, 4, "Spelled", " ".join(letters))
+        draw_detail(screen, label_font, small_font, 5, "Notes held", str(len(named)))
 
         if selected_key and chords:
             # With a key chosen, show the chord's job in that key, and the
@@ -645,7 +658,7 @@ while running:
                 numeral, job, nexts = result
                 draw_text(screen, numeral_font, numeral, TEXT,
                           (NAME_X, CHORD_CARD.top + 156), "midleft")
-                draw_text(screen, small_font, fit_text(small_font, job, NAME_ROOM), DIM_TEXT,
+                draw_text(screen, label_font, fit_text(label_font, job, NAME_ROOM), DIM_TEXT,
                           (NAME_X, CHORD_CARD.top + 196), "midleft")
                 suggestions = "     ".join(f"{name} ({n})" for n, name in nexts)
                 draw_text(screen, keys_font, suggestions, TEXT, strip_text, "midleft")

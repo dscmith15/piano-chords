@@ -183,6 +183,78 @@ def note_spellings(notes, key=None):
     return spell_chord(root, shape)
 
 
+def primary_chord(notes, key=None):
+    """The chord the big name shows, as (root, shape), or None.
+
+    Like chord_names: with a key, a chord that fits the key comes first.
+    """
+    matches = chord_matches(notes)
+    if not matches:
+        return None
+    in_key = chord_in_key(notes, key) if key else None
+    if in_key:
+        root, shape, root_letter = in_key
+        return root, shape
+    return matches[0]
+
+
+def interval_label(interval, shape):
+    """A chord tone's job, counted up from the root, as (degree, text).
+
+    The number is how many letters up it is, counting the root as 1, so
+    the 3rd is 2 letters above the root. The accidental compares it with
+    the major scale: a minor 3rd (3 half steps, 1 less than the major
+    scale's 4) is "b3". (3, Cm's shape) -> (3, "b3").
+    """
+    if interval == 0:
+        return 1, "R"
+    steps = letter_steps(interval, shape)
+    degree = steps + 1
+    if degree == 2 and (3 in shape or 4 in shape):
+        degree = 9  # with a 3rd as well, the 2nd is called the 9th (Cadd9)
+    accidental = interval - MAJOR_SCALE[steps]
+    return degree, ACCIDENTAL_TEXT[accidental] + str(degree)
+
+
+def chord_intervals(shape):
+    """Every chord tone's label, stacked up from the root:
+    (0, 2, 4, 7, 11) -> ['R', '3', '5', '7', '9']."""
+    labels = sorted(interval_label(interval, shape) for interval in shape)
+    return [text for degree, text in labels]  # sorted by degree: 9 after 7
+
+
+# Which chord tone is in the bass, by how many letters it is above the root.
+INVERSIONS = {0: "Root position", 2: "1st inversion", 4: "2nd inversion", 6: "3rd inversion"}
+
+
+def chord_position(notes, root, shape):
+    """Which chord tone is lowest: root position, or an inversion.
+
+    In an inversion the root moves up and another chord tone takes the
+    bass: C/E (E lowest, the 3rd) is the 1st inversion of C.
+    """
+    bass_interval = (min(notes) - root) % 12
+    steps = letter_steps(bass_interval, shape)
+    if steps in INVERSIONS:
+        return INVERSIONS[steps]
+    # A tone that isn't a 3rd, 5th or 7th, like the 9th: just name it.
+    return interval_label(bass_interval, shape)[1] + " in the bass"
+
+
+def chord_voicing(notes):
+    """"Close" if the notes are packed together, "Open" if they're spread out.
+
+    Chords are stacks of 3rds, so in a close voicing no two neighbouring
+    notes are more than a 4th (5 half steps) apart: C4 E4 G4 is close, and
+    so is G3 C4 E4. C3 G3 E4 is open: C3 to G3 is a 5th, room for an E.
+    """
+    ordered = sorted(notes)
+    for low, high in zip(ordered, ordered[1:]):  # each neighbouring pair
+        if high - low > 5:
+            return "Open"
+    return "Close"
+
+
 # Key names, written the way musicians do: flat keys use flats (Bb, not A#).
 # Minor keys borrow the spelling of the major key with the same key
 # signature, so it's F#m (relative of A major), not Gbm.
