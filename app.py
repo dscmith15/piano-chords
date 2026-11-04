@@ -9,25 +9,43 @@ from music import (MAJOR_KEY_NAMES, MINOR_KEY_NAMES, chord_keys, chord_matches,
 
 WIDTH, HEIGHT = 800, 480  # the usual resolution of a 5-inch Pi screen
 BACKGROUND = (20, 20, 30)
+CARD = (30, 30, 44)            # the slightly lighter panels things sit on
 TEXT = (240, 240, 240)
 DIM_TEXT = (140, 140, 160)
 STAFF_LINES = (110, 110, 130)
 BUTTON = (45, 45, 65)
-BUTTON_SELECTED = (70, 90, 160)
-IN_CHORD = (90, 150, 255)      # blue: a note you're playing
+BUTTON_SELECTED = (30, 120, 110)
+IN_CHORD = (60, 200, 180)      # teal: a note you're playing
 OUTSIDE_KEY = (255, 150, 60)   # orange: a note you're playing that's not in the key
 # In improvise mode, each suggested note's name is colored by its role.
 ROLE_COLORS = {"chord": IN_CHORD, "color": TEXT, "avoid": OUTSIDE_KEY}
 WHITE_KEY = (225, 225, 230)
 BLACK_KEY = (30, 30, 40)
 
-# The button that opens the key picker, under the staff.
-KEY_BUTTON = pygame.Rect(20, 424, 250, 44)
-# The scale's name and notes, on the right; tap it to show the next scale.
-SCALE_BUTTON = pygame.Rect(300, 350, 480, 68)
+# The screen is laid out as cards (rounded panels):
+#
+#   [Key button]                              • piano status
+#   +--- chord card -------------+  +--- staff card ---+
+#   | name          | details    |  |  grand staff     |
+#   +----------------------------+  +------------------+
+#   +--- next chords ------------+  +--- scale --------+
+#   keyboard
+#
+# A pygame.Rect is (left, top, width, height).
+KEY_BUTTON = pygame.Rect(8, 4, 210, 34)  # opens the key picker
+CHORD_CARD = pygame.Rect(8, 44, 484, 222)
+STAFF_CARD = pygame.Rect(500, 44, 292, 222)
+NEXT_CARD = pygame.Rect(8, 274, 388, 60)
+SCALE_BUTTON = pygame.Rect(404, 274, 388, 60)  # tap it to show the next scale
+# With no key there's no scale to show, so the next-chords card takes the
+# whole row. union() makes the smallest Rect covering both.
+WIDE_CARD = NEXT_CARD.union(SCALE_BUTTON)
+NAME_X = CHORD_CARD.left + 16  # the chord name's left edge
+NAME_ROOM = 272                # how wide the chord name can be
+DETAILS_LEFT, DETAILS_RIGHT = 310, 476  # the details column in the chord card
 
-# The mini keyboard (one octave, C to B) between the staff and the button.
-KEYBOARD_LEFT, KEYBOARD_TOP = 25, 366
+# The mini keyboard (one octave, C to B), in the middle of the bottom row.
+KEYBOARD_LEFT, KEYBOARD_TOP = 281, 370
 WHITE_W, WHITE_H = 34, 52
 BLACK_W, BLACK_H = 20, 32
 WHITE_PITCHES = [0, 2, 4, 5, 7, 9, 11]            # C D E F G A B
@@ -39,23 +57,21 @@ SUSTAIN_PEDAL = 64  # the standard MIDI control number for the sustain pedal
 # chord, so the right hand is free to play a melody on top.
 SPLIT_NOTE = 60
 
-# The grand staff fills the left of the screen; the text fills the right.
-STAFF_LEFT, STAFF_RIGHT = 20, 270
-STEP = 8                # pixels between one staff step and the next
+# The grand staff, inside the staff card.
+STAFF_LEFT, STAFF_RIGHT = 512, 780
+STEP = 5.5              # pixels between one staff step and the next
 SPACE = STEP * 2        # pixels between two staff lines (a "staff space")
-MIDDLE_C_Y = 212        # the y position of middle C (step 0)
+MIDDLE_C_Y = 158        # the y position of middle C (step 0)
 
 # Like sheet music, notes past a few ledger lines are written an octave
 # (or two) closer to the staff, with "8va"/"8vb" to say so. These are the
-# furthest steps we write before doing that. Below the bass there's less
-# room, because the mini keyboard is underneath.
-HIGHEST_STEP = 17       # F6: 3 ledger lines above the treble staff
-LOWEST_STEP = -15       # B1: 2 ledger lines below the bass staff
-CLEF_X = 28             # where the clefs start
-NOTE_X = 170            # where the chord's note heads go
-NOTE_W, NOTE_H = 20, 15  # note head size
-TEXT_X = 540            # the middle of the text area
-TEXT_ROOM = 500         # the widest text that fits there (with a margin)
+# furthest steps we write before doing that, so everything (the 8va/8vb
+# marks too) stays inside the card.
+HIGHEST_STEP = 16       # E6: 3 ledger lines above the treble staff
+LOWEST_STEP = -14       # C2: 2 ledger lines below the bass staff
+CLEF_X = 520            # where the clefs start
+NOTE_X = 670            # where the chord's note heads go
+NOTE_W, NOTE_H = 15, 11  # note head size
 
 # The staff lines, as steps: E G B D F in treble, G B D F A in bass.
 TREBLE_LINES = [2, 4, 6, 8, 10]
@@ -121,10 +137,40 @@ def make_splash(music_font, title_font, small_font):
     return splash
 
 
-def draw_text(screen, font, text, color, center):
-    """Draw text on the screen with its middle at the point `center`."""
+def draw_text(screen, font, text, color, point, anchor="center"):
+    """Draw text on the screen, placed by one of its points.
+
+    `anchor` says which point of the text goes at `point`: "center" (the
+    middle), "midleft" (the middle of its left edge, for left-aligned
+    text), "midright", "topleft", and so on: any of pygame.Rect's names.
+    """
     image = font.render(text, True, color)
-    screen.blit(image, image.get_rect(center=center))
+    rect = image.get_rect(**{anchor: point})  # like get_rect(midleft=point)
+    screen.blit(image, rect)
+
+
+def fit_text(font, text, width):
+    """Shorten text with "..." until it fits in `width` pixels."""
+    if font.size(text)[0] <= width:
+        return text
+    while text and font.size(text + "...")[0] > width:
+        text = text[:-1]  # drop the last letter and try again
+    return text + "..."
+
+
+def draw_card(screen, rect):
+    """A rounded panel for a group of things to sit on."""
+    pygame.draw.rect(screen, CARD, rect, border_radius=12)
+
+
+def draw_detail(screen, label_font, value_font, row, label, value):
+    """One row of the chord card's details: a label on the left, its value
+    on the right."""
+    y = CHORD_CARD.top + 26 + row * 32
+    draw_text(screen, label_font, label, DIM_TEXT, (DETAILS_LEFT, y), "midleft")
+    room = DETAILS_RIGHT - DETAILS_LEFT - label_font.size(label)[0] - 12
+    value = fit_text(value_font, value, room)
+    draw_text(screen, value_font, value, TEXT, (DETAILS_RIGHT, y), "midright")
 
 
 def key_label(key):
@@ -226,7 +272,7 @@ def step_y(step):
 def draw_ledger_line(screen, x, step):
     """A short line through (or under) a note that's off the staff."""
     y = step_y(step)
-    pygame.draw.line(screen, STAFF_LINES, (x - 18, y), (x + 18, y), 2)
+    pygame.draw.line(screen, STAFF_LINES, (x - 13, y), (x + 13, y), 2)
 
 
 def draw_symbol(screen, symbol, x, step):
@@ -330,15 +376,15 @@ def draw_staff(screen, symbols, label_font, notes, spellings):
 pygame.init()
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Piano Chords")
-chord_font = pygame.font.SysFont(None, 150)
-narrow_chord_font = pygame.font.SysFont(None, 120)  # for long names like EbdimMaj7
-also_font = pygame.font.SysFont(None, 40)
-keys_font = pygame.font.SysFont(None, 34)
-notes_font = pygame.font.SysFont(None, 44)
-numeral_font = pygame.font.SysFont(None, 90)
+# The chord name uses the biggest of these that fits (long names like
+# EbdimMaj7 need a smaller one).
+chord_fonts = [pygame.font.SysFont(None, size) for size in (100, 84, 68, 54)]
+keys_font = pygame.font.SysFont(None, 30)
+numeral_font = pygame.font.SysFont(None, 56)
 button_font = pygame.font.SysFont(None, 36)
-ottava_font = pygame.font.SysFont(None, 28, italic=True)
+ottava_font = pygame.font.SysFont(None, 22, italic=True)
 small_font = pygame.font.SysFont(None, 26)
+label_font = pygame.font.SysFont(None, 22)  # the dim labels on cards
 clock = pygame.time.Clock()
 picker_buttons = make_picker_buttons()
 
@@ -438,13 +484,33 @@ while running:
         clock.tick(60)
         continue  # skip the normal screen while the picker is open
 
+    # The cards go down first, so everything else is drawn on top of them.
+    draw_card(screen, CHORD_CARD)
+    draw_card(screen, STAFF_CARD)
+    if selected_key:
+        draw_card(screen, NEXT_CARD)
+        pygame.draw.rect(screen, BUTTON, SCALE_BUTTON, border_radius=12)
+    else:
+        draw_card(screen, WIDE_CARD)
+    # The details column, split from the name by a thin line.
+    pygame.draw.line(screen, BUTTON, (DETAILS_LEFT - 14, CHORD_CARD.top + 14),
+                     (DETAILS_LEFT - 14, CHORD_CARD.bottom - 14), 2)
+
+    # The top bar: the Key button, and a dot saying if the piano's there.
+    key_text = "Key: " + key_label(selected_key) if selected_key else "Key: none"
+    draw_button(screen, keys_font, KEY_BUTTON, key_text)
+    status = port.name if port else "Waiting for piano..."
+    draw_text(screen, label_font, status, DIM_TEXT, (WIDTH - 12, 21), "midright")
+    dot_x = WIDTH - 12 - label_font.size(status)[0] - 12
+    pygame.draw.circle(screen, IN_CHORD if port else OUTSIDE_KEY, (dot_x, 21), 5)
+
     spellings = note_spellings(sounding, selected_key) if sounding else {}
     draw_staff(screen, symbols, ottava_font, sounding, spellings)
-    key_text = "Key: " + key_label(selected_key) if selected_key else "Key: none"
-    draw_button(screen, button_font, KEY_BUTTON, key_text)
     if port is None:
-        draw_text(screen, also_font, "Waiting for piano...", DIM_TEXT, (TEXT_X, 120))
-        draw_text(screen, keys_font, "Is it switched on and connected?", DIM_TEXT, (TEXT_X, 165))
+        draw_text(screen, small_font, "Is the piano switched on", DIM_TEXT,
+                  (NAME_X, CHORD_CARD.top + 40), "midleft")
+        draw_text(screen, small_font, "and connected?", DIM_TEXT,
+                  (NAME_X, CHORD_CARD.top + 66), "midleft")
     if selected_key:
         scale_name = SCALE_NAMES[scale_index]
         playing = {n % 12 for n in sounding}
@@ -484,54 +550,83 @@ while running:
                 text = f"({name})" if is_optional else name
                 words.append((text, IN_CHORD if pc in playing else TEXT))
 
-        pygame.draw.rect(screen, BUTTON, SCALE_BUTTON, border_radius=10)
         # Add the hint when there's room; long titles go without it.
-        if small_font.size(title + "   (tap to change)")[0] <= SCALE_BUTTON.width - 20:
+        if label_font.size(title + "   (tap to change)")[0] <= SCALE_BUTTON.width - 20:
             title += "   (tap to change)"
-        draw_text(screen, small_font, title, DIM_TEXT, (SCALE_BUTTON.centerx, SCALE_BUTTON.top + 16))
-        draw_text_row(screen, keys_font, words, (SCALE_BUTTON.centerx, SCALE_BUTTON.top + 46))
+        draw_text(screen, label_font, title, DIM_TEXT, (SCALE_BUTTON.centerx, SCALE_BUTTON.top + 14))
+        draw_text_row(screen, keys_font, words, (SCALE_BUTTON.centerx, SCALE_BUTTON.top + 40))
+
     # What the big chord name describes: every note you're playing, or in
     # improvise mode the left hand's chord, so a melody on top doesn't
     # change it and it stays after you lift your hand.
     named = sounding
     if selected_key and SCALE_NAMES[scale_index].startswith("improvise") and improv_chord:
         named = improv_chord
-    if named:
+    # The bottom-left card: what comes next in the key, or which keys the
+    # chord fits when there's no key. It's labelled at the top left.
+    strip = NEXT_CARD if selected_key else WIDE_CARD
+    strip_label = (strip.left + 14, strip.top + 14)
+    strip_text = (strip.left + 14, strip.top + 40)
+    if not named:
+        hint = "Play a chord" if selected_key else "Tap Key to see progressions and scales"
+        draw_text(screen, small_font, hint, DIM_TEXT, strip_text, "midleft")
+    else:
         chords = chord_names(named, selected_key)
         interval = interval_name(named)
         if chords:
-            font = chord_font if chord_font.size(chords[0])[0] <= TEXT_ROOM else narrow_chord_font
-            draw_text(screen, font, chords[0], TEXT, (TEXT_X, 80))
+            # The biggest font the name fits in, or else the smallest one.
+            font = chord_fonts[-1]
+            for f in chord_fonts:
+                if f.size(chords[0])[0] <= NAME_ROOM:
+                    font = f
+                    break
+            draw_text(screen, font, chords[0], TEXT, (NAME_X, CHORD_CARD.top + 56), "midleft")
         elif interval:
             # Two notes aren't a chord, so name the distance between them.
-            draw_text(screen, numeral_font, interval, TEXT, (TEXT_X, 80))
+            draw_text(screen, numeral_font, fit_text(numeral_font, interval, NAME_ROOM),
+                      TEXT, (NAME_X, CHORD_CARD.top + 56), "midleft")
             half_steps = max(named) - min(named)
-            draw_text(screen, also_font, f"{half_steps} half steps", DIM_TEXT, (TEXT_X, 160))
+            draw_text(screen, small_font, f"{half_steps} half steps", DIM_TEXT,
+                      (NAME_X, CHORD_CARD.top + 104), "midleft")
         if len(chords) > 1:
-            also = "also " + ", ".join(chords[1:])
-            draw_text(screen, also_font, also, DIM_TEXT, (TEXT_X, 160))
+            also = fit_text(small_font, "also " + ", ".join(chords[1:]), NAME_ROOM)
+            draw_text(screen, small_font, also, DIM_TEXT, (NAME_X, CHORD_CARD.top + 104), "midleft")
+
+        # The details column: the note names (no octaves, lowest first,
+        # each letter once) and how many notes there are.
+        named_spellings = note_spellings(named, selected_key)
+        letters = []
+        for n in sorted(named):
+            name = note_name(n, named_spellings.get(n % 12))[:-1]  # [:-1] drops the octave
+            if name not in letters:
+                letters.append(name)
+        draw_detail(screen, label_font, small_font, 0, "Spelled", " ".join(letters))
+        draw_detail(screen, label_font, small_font, 1, "Notes held", str(len(named)))
+
         if selected_key and chords:
-            # With a key chosen, show the chord's job in that key and the
-            # chords that usually come next: "next:  C (I)   Am (vi)".
+            # With a key chosen, show the chord's job in that key, and the
+            # chords that usually come next: "C (I)   Am (vi)".
             result = progression(named, *selected_key)
+            draw_text(screen, label_font, "Next", DIM_TEXT, strip_label, "midleft")
             if result:
                 numeral, job, nexts = result
-                draw_text(screen, numeral_font, numeral, TEXT, (TEXT_X, 225))
-                draw_text(screen, keys_font, job, DIM_TEXT, (TEXT_X, 280))
-                suggestions = "   ".join(f"{name} ({n})" for n, name in nexts)
-                draw_text(screen, also_font, "next:  " + suggestions, TEXT, (TEXT_X, 330))
+                draw_text(screen, numeral_font, numeral, TEXT,
+                          (NAME_X, CHORD_CARD.top + 156), "midleft")
+                draw_text(screen, small_font, fit_text(small_font, job, NAME_ROOM), DIM_TEXT,
+                          (NAME_X, CHORD_CARD.top + 196), "midleft")
+                suggestions = "     ".join(f"{name} ({n})" for n, name in nexts)
+                draw_text(screen, keys_font, suggestions, TEXT, strip_text, "midleft")
             else:
-                draw_text(screen, keys_font, "not in " + key_label(selected_key),
-                          DIM_TEXT, (TEXT_X, 260))
-        else:
-            # No key chosen: list every key the chord fits, "C: I".
+                draw_text(screen, small_font, "not in " + key_label(selected_key), DIM_TEXT,
+                          (NAME_X, CHORD_CARD.top + 156), "midleft")
+                draw_text(screen, small_font, "-", DIM_TEXT, strip_text, "midleft")
+        elif chords:
+            # No key chosen: every key the chord fits, "C: I", in one row.
             major_keys, minor_keys = chord_keys(named)
-            for keys, x in ((major_keys, TEXT_X - 120), (minor_keys, TEXT_X + 120)):
-                for row, (key, numeral) in enumerate(keys):
-                    draw_text(screen, keys_font, f"{key}: {numeral}", DIM_TEXT, (x, 215 + row * 34))
-    if sounding:
-        names = "  ".join(note_name(n, spellings.get(n % 12)) for n in sorted(sounding))
-        draw_text(screen, notes_font, names, TEXT, (TEXT_X, 446))
+            fits = "    ".join(f"{key}: {numeral}" for key, numeral in major_keys + minor_keys)
+            draw_text(screen, label_font, "Keys it fits", DIM_TEXT, strip_label, "midleft")
+            draw_text(screen, keys_font, fit_text(keys_font, fits, strip.width - 28), TEXT,
+                      strip_text, "midleft")
 
     # 4. The splash screen, drawn over the finished frame. During the fade
     #    it gets more see-through, so the app appears underneath it.
