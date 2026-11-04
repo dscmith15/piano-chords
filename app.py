@@ -5,7 +5,8 @@ import pygame
 
 from music import (MAJOR_KEY_NAMES, MINOR_KEY_NAMES, chord_intervals, chord_keys,
                    chord_matches, chord_names, chord_position, chord_voicing,
-                   improv_scale, SCALE_NAMES, interval_name, note_name, note_spellings,
+                   improv_scale, SCALE_NAMES, interval_name, key_chord_notes, note_name,
+                   note_spellings, voice_lead,
                    primary_chord, progression, scale_for, SIXTH_DIMINISHED, sixth_dim_chords,
                    sixth_dim_movement, spelled_name, staff_step)
 
@@ -286,14 +287,14 @@ def draw_keyboard(screen, keys, font, sounding, next_keys, scale, optional, chor
             draw_text(screen, font, f"C{note // 12 - 1}", STAFF_LINES, (rect.centerx, rect.bottom - 9))
 
 
-def draw_text_row(screen, font, words, center):
-    """Draw several (text, color) words in a row, centered on a point."""
+def draw_text_row(screen, font, words, point, centered=True, gap=18):
+    """Draw several (text, color) words in a row, centered on a point (or,
+    with centered=False, starting from it)."""
     images = [font.render(text, True, color) for text, color in words]
-    gap = 18
     width = sum(image.get_width() for image in images) + gap * (len(images) - 1)
-    x = center[0] - width // 2
+    x = point[0] - width // 2 if centered else point[0]
     for image in images:
-        screen.blit(image, image.get_rect(midleft=(x, center[1])))
+        screen.blit(image, image.get_rect(midleft=(x, point[1])))
         x += image.get_width() + gap
 
 
@@ -449,6 +450,8 @@ selected_key = None  # None, or (tonic, minor) like (0, False) for C major
 scale_index = 0      # which of SCALE_NAMES to show; 0 is the key's own scale
 picking = False      # True while the key picker is on screen
 improv_chord = None  # in improvise mode, the left hand's last chord (MIDI notes)
+next_choice = 0      # which "next" chord is picked (tap the Next card to change)
+last_chord = None    # the chord name last time, to notice when it changes
 
 port = None        # the piano's MIDI connection, or None while it isn't there
 last_check = -1000  # when we last looked for the piano (in milliseconds)
@@ -493,6 +496,8 @@ while running:
             elif selected_key and SCALE_BUTTON.collidepoint(event.pos):
                 # Step to the next scale, wrapping round to the start.
                 scale_index = (scale_index + 1) % len(SCALE_NAMES)
+            elif selected_key and NEXT_CARD.collidepoint(event.pos):
+                next_choice += 1  # the next suggestion (wraps round when drawn)
 
     # 2. Handle every MIDI message that arrived since the last frame.
     #    iter_pending() doesn't wait: if nothing came in, the loop is empty.
@@ -602,8 +607,9 @@ while running:
             title += "   (tap to change)"
         draw_text(screen, label_font, title, DIM_TEXT, (SCALE_BUTTON.centerx, SCALE_BUTTON.top + 14))
         draw_text_row(screen, keys_font, words, (SCALE_BUTTON.centerx, SCALE_BUTTON.top + 40))
+    # Keys to move to next, shown on the keyboard: the 6 dim movement, or
+    # (set further down) the way into the picked next chord.
     next_keys = movement[1] if movement else []
-    draw_keyboard(screen, keyboard, octave_font, sounding, next_keys, *marks)  # * unpacks the 4 sets
 
     # What the big chord name describes: every note you're playing, or in
     # improvise mode the left hand's chord, so a melody on top doesn't
@@ -676,8 +682,14 @@ while running:
                           strip_label, "midleft")
                 draw_text(screen, keys_font, next_name + ":   " + " ".join(next_names), TEXT,
                           strip_text, "midleft")
-            else:
+            elif not result or len(result[2]) == 1:
                 draw_text(screen, label_font, "Next", DIM_TEXT, strip_label, "midleft")
+            else:
+                draw_text(screen, label_font, "Next   (tap to change)", DIM_TEXT,
+                          strip_label, "midleft")
+            if chords[0] != last_chord:
+                next_choice = 0  # a new chord starts from its first suggestion
+                last_chord = chords[0]
             if result:
                 numeral, job, nexts = result
                 draw_text(screen, numeral_font, numeral, TEXT,
@@ -685,8 +697,14 @@ while running:
                 draw_text(screen, label_font, fit_text(label_font, job, NAME_ROOM), DIM_TEXT,
                           (NAME_X, CHORD_CARD.top + 196), "midleft")
                 if not movement:
-                    suggestions = "     ".join(f"{name} ({n})" for n, name in nexts)
-                    draw_text(screen, keys_font, suggestions, TEXT, strip_text, "midleft")
+                    # The picked suggestion is bright; the keyboard shows the
+                    # smoothest way into it from the notes you're holding.
+                    picked = next_choice % len(nexts)  # % wraps round to the first
+                    words = [(f"{name} ({n})", TEXT if i == picked else DIM_TEXT)
+                             for i, (n, name) in enumerate(nexts)]
+                    draw_text_row(screen, keys_font, words, strip_text, centered=False, gap=30)
+                    target = key_chord_notes(*selected_key, nexts[picked][0])
+                    next_keys = voice_lead(named, target)
             else:
                 draw_text(screen, small_font, "not in " + key_label(selected_key), DIM_TEXT,
                           (NAME_X, CHORD_CARD.top + 156), "midleft")
@@ -699,6 +717,9 @@ while running:
             draw_text(screen, label_font, "Keys it fits", DIM_TEXT, strip_label, "midleft")
             draw_text(screen, keys_font, fit_text(keys_font, fits, strip.width - 28), TEXT,
                       strip_text, "midleft")
+
+    # The keyboard goes last, once we know which keys to show as next.
+    draw_keyboard(screen, keyboard, octave_font, sounding, next_keys, *marks)  # * unpacks the 4 sets
 
     # 4. The splash screen, drawn over the finished frame. During the fade
     #    it gets more see-through, so the app appears underneath it.

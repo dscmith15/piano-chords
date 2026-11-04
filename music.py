@@ -469,6 +469,66 @@ def key_chord_name(tonic, minor, numeral):
     return spelled_name(letter, accidental_between(root, letter)) + suffix
 
 
+# The three-note chord shapes by suffix: "" -> (0, 4, 7), "m" -> (0, 3, 7), ...
+TRIADS = {suffix: shape for shape, suffix in CHORDS.items() if len(shape) == 3}
+
+
+def key_chord_notes(tonic, minor, numeral):
+    """The pitch classes of a key's chord: IV in C major -> {5, 9, 0} (F A C)."""
+    offset, suffix, _ = (MINOR_KEY_CHORDS if minor else MAJOR_KEY_CHORDS)[numeral]
+    root = (tonic + offset) % 12
+    return {(root + interval) % 12 for interval in TRIADS[suffix]}
+
+
+def nearest(note, pitch_class):
+    """The closest MIDI note to `note` with this pitch class (up on a tie):
+    nearest(64, 5) -> 65 (E4 to F4), nearest(67, 0) -> 72 (G4 to C5)."""
+    up = (pitch_class - note) % 12  # half steps up to it, 0 to 11
+    return note + up if up <= 6 else note + up - 12
+
+
+def voice_lead(notes, pitch_classes):
+    """Smooth voice leading: move each note the shortest way into the next chord.
+
+    Notes the two chords share stay put, and the rest move by a step or
+    so. C4 E4 G4 to F major (F A C) -> C4 F4 A4: C stays, E goes up a half
+    step, G up a whole step. Returns the new notes, lowest first.
+    """
+    # 1. Each note goes to the closest note of the next chord.
+    moved = {}
+    for note in notes:
+        options = [nearest(note, pc) for pc in pitch_classes]
+        moved[note] = min(options, key=lambda m: abs(m - note))
+
+    # 2. Two notes may have gone to the same chord tone, leaving another
+    #    chord tone out. While there's a "spare" note like that, move the
+    #    one that costs least extra to fill in a missing chord tone.
+    missing = pitch_classes - {m % 12 for m in moved.values()}
+    while missing:
+        targets = [m % 12 for m in moved.values()]
+        spare = [n for n in moved if targets.count(moved[n] % 12) > 1]
+        if not spare:
+            break  # fewer notes than chord tones: some have to be left out
+        def extra(choice):
+            note, pc = choice
+            return abs(nearest(note, pc) - note) - abs(moved[note] - note)
+        note, pc = min(((n, pc) for n in spare for pc in missing), key=extra)
+        moved[note] = nearest(note, pc)
+        missing.discard(pc)
+
+    # 3. Two notes can't land on the same key (G7 to C sends both B and D
+    #    to C). Notes with the smallest moves keep their key; a later one
+    #    whose key is taken goes to the closest free note of the chord.
+    taken = set()
+    for note in sorted(moved, key=lambda n: abs(moved[n] - n)):
+        if moved[note] in taken:
+            free = [m for m in range(note - 12, note + 13)
+                    if m % 12 in pitch_classes and m not in taken]
+            moved[note] = min(free, key=lambda m: abs(m - note))
+        taken.add(moved[note])
+    return sorted(moved.values())
+
+
 def numeral_on(tonic, minor, root):
     """Which of the key's basic chords is built on this root, or None."""
     for numeral, (offset, _, _) in (MINOR_KEY_CHORDS if minor else MAJOR_KEY_CHORDS).items():
