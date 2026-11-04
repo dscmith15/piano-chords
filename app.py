@@ -44,13 +44,12 @@ NAME_X = CHORD_CARD.left + 16  # the chord name's left edge
 NAME_ROOM = 272                # how wide the chord name can be
 DETAILS_LEFT, DETAILS_RIGHT = 310, 476  # the details column in the chord card
 
-# The mini keyboard (one octave, C to B), in the middle of the bottom row.
-KEYBOARD_LEFT, KEYBOARD_TOP = 281, 370
-WHITE_W, WHITE_H = 34, 52
-BLACK_W, BLACK_H = 20, 32
-WHITE_PITCHES = [0, 2, 4, 5, 7, 9, 11]            # C D E F G A B
-# Each black key sits on the line after a white key: C# after C (white 0), ...
-BLACK_PITCHES = {1: 0, 3: 1, 6: 3, 8: 4, 10: 5}
+# The full keyboard along the bottom: all 88 keys, A0 (MIDI 21) to C8 (108).
+KEYBOARD = pygame.Rect(8, 342, 784, 130)
+LOWEST_KEY, HIGHEST_KEY = 21, 108
+BLACK_PITCHES = {1, 3, 6, 8, 10}  # C# D# F# G# A#
+WHITE_W = KEYBOARD.width / 52     # 52 white keys share the width: about 15 pixels each
+BLACK_W, BLACK_H = 9, 80
 
 SUSTAIN_PEDAL = 64  # the standard MIDI control number for the sustain pedal
 # In improvise mode, only notes below this one (middle C) count as the
@@ -217,39 +216,68 @@ def draw_picker(screen, font, buttons, selected_key):
     draw_text(screen, font, "Minor keys", DIM_TEXT, (WIDTH // 2, 205))
 
 
+def make_keyboard():
+    """The 88 keys, as (MIDI note, rectangle, is_black) triples.
+
+    The white keys come first and the black keys after, so drawing them in
+    this order puts the black keys on top, like a real keyboard.
+    """
+    whites = []
+    blacks = []
+    for note in range(LOWEST_KEY, HIGHEST_KEY + 1):
+        # The left edge of the next white key, i.e. the line between it and
+        # the white key before it.
+        x = KEYBOARD.left + len(whites) * WHITE_W
+        if note % 12 in BLACK_PITCHES:
+            # A black key sits across that line, half on each white key.
+            rect = pygame.Rect(round(x - BLACK_W / 2), KEYBOARD.top, BLACK_W, BLACK_H)
+            blacks.append((note, rect, True))
+        else:
+            # Rects need whole pixels, so round both edges. The -1 leaves a
+            # 1-pixel gap of background between neighbouring white keys.
+            width = round(x + WHITE_W) - round(x) - 1
+            rect = pygame.Rect(round(x), KEYBOARD.top, width, KEYBOARD.height)
+            whites.append((note, rect, False))
+    return whites + blacks
+
+
 def draw_key_marker(screen, center, pitch_class, scale, optional, chord, avoid, on_black):
     """The dot on one keyboard key, showing how that note fits the key."""
     if pitch_class in chord:
-        color = IN_CHORD if pitch_class in scale | optional else OUTSIDE_KEY
-        pygame.draw.circle(screen, color, center, 8)
+        pygame.draw.circle(screen, IN_CHORD, center, 4)
     elif pitch_class in scale:
-        pygame.draw.circle(screen, (170, 170, 185) if on_black else (140, 140, 155), center, 6)
+        pygame.draw.circle(screen, (170, 170, 185) if on_black else (140, 140, 155), center, 3)
     elif pitch_class in optional:
-        pygame.draw.circle(screen, IN_CHORD, center, 7, 2)  # a ring: optional
+        pygame.draw.circle(screen, IN_CHORD, center, 4, 1)  # a ring: optional
     elif pitch_class in avoid:
-        pygame.draw.circle(screen, OUTSIDE_KEY, center, 6, 2)  # an orange ring: careful
+        pygame.draw.circle(screen, OUTSIDE_KEY, center, 4, 1)  # an orange ring: careful
 
 
-def draw_keyboard(screen, scale, optional, chord, avoid=frozenset()):
-    """A one-octave keyboard marking the scale's notes and the chord's.
+def draw_keyboard(screen, keys, font, sounding, scale, optional, chord, avoid):
+    """The 88-key keyboard, lighting up the keys being played.
 
-    Each argument is a set of pitch classes: the scale's notes, its optional
-    notes (a minor key's raised 7th), the notes being played, and notes to
-    avoid holding (in improvise mode).
+    `keys` comes from make_keyboard() and `sounding` is the MIDI notes being
+    played. The other arguments are sets of pitch classes, marked with dots
+    in every octave: the scale's notes, its optional notes (a minor key's
+    raised 7th), chord tones and notes to avoid (both in improvise mode).
     """
-    # White keys first, then black keys on top, like a real keyboard.
-    for i, pitch_class in enumerate(WHITE_PITCHES):
-        rect = pygame.Rect(KEYBOARD_LEFT + i * WHITE_W, KEYBOARD_TOP, WHITE_W, WHITE_H)
-        pygame.draw.rect(screen, WHITE_KEY, rect)
-        pygame.draw.rect(screen, BLACK_KEY, rect, 1)  # 1 = just the outline
-        center = (rect.centerx, rect.bottom - 14)
-        draw_key_marker(screen, center, pitch_class, scale, optional, chord, avoid, False)
-    for pitch_class, white_before in BLACK_PITCHES.items():
-        x = KEYBOARD_LEFT + (white_before + 1) * WHITE_W - BLACK_W // 2
-        rect = pygame.Rect(x, KEYBOARD_TOP, BLACK_W, BLACK_H)
-        pygame.draw.rect(screen, BLACK_KEY, rect)
-        center = (rect.centerx, rect.bottom - 11)
-        draw_key_marker(screen, center, pitch_class, scale, optional, chord, avoid, True)
+    allowed = scale | optional | chord
+    for note, rect, is_black in keys:
+        pitch_class = note % 12
+        if note in sounding:
+            # A key you're playing lights up: teal, or orange if it's
+            # outside the scale (with no key, everything is teal).
+            color = IN_CHORD if not allowed or pitch_class in allowed else OUTSIDE_KEY
+        else:
+            color = BLACK_KEY if is_black else WHITE_KEY
+        pygame.draw.rect(screen, color, rect, border_bottom_left_radius=2,
+                         border_bottom_right_radius=2)
+        if note not in sounding:
+            center = (rect.centerx, rect.bottom - (10 if is_black else 26))
+            draw_key_marker(screen, center, pitch_class, scale, optional, chord, avoid, is_black)
+        if pitch_class == 0:
+            # Label every C with its octave, so you can find your place.
+            draw_text(screen, font, f"C{note // 12 - 1}", STAFF_LINES, (rect.centerx, rect.bottom - 9))
 
 
 def draw_text_row(screen, font, words, center):
@@ -385,8 +413,10 @@ button_font = pygame.font.SysFont(None, 36)
 ottava_font = pygame.font.SysFont(None, 22, italic=True)
 small_font = pygame.font.SysFont(None, 26)
 label_font = pygame.font.SysFont(None, 22)  # the dim labels on cards
+octave_font = pygame.font.SysFont(None, 14)  # C1 ... C8 on the keyboard
 clock = pygame.time.Clock()
 picker_buttons = make_picker_buttons()
+keyboard = make_keyboard()
 
 # Make the music symbols once at the start, not again every frame.
 # The above/below sizes are the standard proportions used in printed music.
@@ -511,6 +541,9 @@ while running:
                   (NAME_X, CHORD_CARD.top + 40), "midleft")
         draw_text(screen, small_font, "and connected?", DIM_TEXT,
                   (NAME_X, CHORD_CARD.top + 66), "midleft")
+    # The dots to put on the keyboard: (scale, optional, chord, avoid).
+    # With no key there are none, and only the keys you play light up.
+    marks = (set(), set(), set(), set())
     if selected_key:
         scale_name = SCALE_NAMES[scale_index]
         playing = {n % 12 for n in sounding}
@@ -526,21 +559,20 @@ while running:
                 chord_tones = {pc for pc, name, role in improv_notes if role == "chord"}
                 color = {pc for pc, name, role in improv_notes if role == "color"}
                 avoid = {pc for pc, name, role in improv_notes if role == "avoid"}
-                draw_keyboard(screen, chord_tones | color, set(), chord_tones, avoid)
+                marks = (color, set(), chord_tones, avoid)
                 chord_name = chord_names(improv_chord, selected_key)[0]
                 title = ("Spicy over " if spicy else "Over ") + chord_name + ": " + mode
                 words = [(name, ROLE_COLORS[role]) for pc, name, role in improv_notes]
             else:
-                draw_keyboard(screen, set(), set(), playing)
                 title = "Spicy improvise" if spicy else "Improvise"
                 words = [("hold a chord below middle C", DIM_TEXT)]
         else:
-            # The chosen scale, on the mini keyboard and as a row of names.
-            # Notes you're playing are blue (orange if they're outside the scale).
+            # The chosen scale, as dots on the keyboard and a row of names.
+            # Notes you're playing are teal (orange if they're outside the scale).
             scale_notes = scale_for(*selected_key, scale_name)
             scale = {pc for pc, name, optional in scale_notes if not optional}
             optional = {pc for pc, name, is_optional in scale_notes if is_optional}
-            draw_keyboard(screen, scale, optional, playing)
+            marks = (scale, optional, set(), set())
             if scale_name == "key":
                 title = key_label(selected_key) + " scale"
             else:
@@ -555,6 +587,7 @@ while running:
             title += "   (tap to change)"
         draw_text(screen, label_font, title, DIM_TEXT, (SCALE_BUTTON.centerx, SCALE_BUTTON.top + 14))
         draw_text_row(screen, keys_font, words, (SCALE_BUTTON.centerx, SCALE_BUTTON.top + 40))
+    draw_keyboard(screen, keyboard, octave_font, sounding, *marks)  # * unpacks the 4 sets
 
     # What the big chord name describes: every note you're playing, or in
     # improvise mode the left hand's chord, so a melody on top doesn't
