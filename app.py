@@ -6,7 +6,8 @@ import pygame
 from music import (MAJOR_KEY_NAMES, MINOR_KEY_NAMES, chord_intervals, chord_keys,
                    chord_matches, chord_names, chord_position, chord_voicing,
                    improv_scale, SCALE_NAMES, interval_name, note_name, note_spellings,
-                   primary_chord, progression, scale_for, spelled_name, staff_step)
+                   primary_chord, progression, scale_for, SIXTH_DIMINISHED, sixth_dim_chords,
+                   spelled_name, staff_step)
 
 WIDTH, HEIGHT = 800, 480  # the usual resolution of a 5-inch Pi screen
 BACKGROUND = (20, 20, 30)
@@ -259,8 +260,9 @@ def draw_keyboard(screen, keys, font, sounding, scale, optional, chord, avoid):
 
     `keys` comes from make_keyboard() and `sounding` is the MIDI notes being
     played. The other arguments are sets of pitch classes, marked with dots
-    in every octave: the scale's notes, its optional notes (a minor key's
-    raised 7th), chord tones and notes to avoid (both in improvise mode).
+    in every octave: the scale's notes, notes to ring instead (a minor
+    key's optional raised 7th, or a 6 dim scale's dim7 notes), chord tones
+    and notes to avoid (both in improvise mode).
     """
     allowed = scale | optional | chord
     for note, rect, is_black in keys:
@@ -573,11 +575,18 @@ while running:
             scale_notes = scale_for(*selected_key, scale_name)
             scale = {pc for pc, name, optional in scale_notes if not optional}
             optional = {pc for pc, name, is_optional in scale_notes if is_optional}
+            if scale_name in SIXTH_DIMINISHED:
+                # Ring the dim7 chord's notes, so you can see them take
+                # turns with the 6 chord's (dots) up the keyboard.
+                sixth, dim, dim_notes = sixth_dim_chords(*selected_key, scale_name)
+                scale, optional = scale - dim_notes, dim_notes
             marks = (scale, optional, set(), set())
             if scale_name == "key":
                 title = key_label(selected_key) + " scale"
             else:
                 title = key_label(selected_key).split()[0] + " " + scale_name  # "C blues"
+            if scale_name in SIXTH_DIMINISHED:
+                title += f":  {sixth} + {dim}"  # "C maj6 dim:  C6 + Bdim7"
             words = []
             for pc, name, is_optional in scale_notes:
                 text = f"({name})" if is_optional else name

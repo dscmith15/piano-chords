@@ -560,7 +560,17 @@ OTHER_SCALES = {
     "half-whole diminished": [(0, 0), (1, 1), (3, 2), (4, 2), (6, 3), (7, 4), (9, 5), (10, 6)],
     # Six notes, all a whole step apart: dreamy, fits augmented chords.
     "whole tone": [(0, 0), (2, 1), (4, 2), (6, 3), (8, 4), (10, 5)],
+    # Barry Harris's 6th diminished scales: the major (or minor) scale with
+    # a b6 added. Its 8 notes take turns between two chords: C maj6 dim is
+    # C D E F G Ab A B, and every other note makes C6 (C E G A), with
+    # Bdim7 (B D F Ab) in between.
+    "maj6 dim": [(0, 0), (2, 1), (4, 2), (5, 3), (7, 4), (8, 5), (9, 5), (11, 6)],
+    "min6 dim": [(0, 0), (2, 1), (3, 2), (5, 3), (7, 4), (8, 5), (9, 5), (11, 6)],
 }
+# Each 6th diminished scale's 6 chord (its suffix), and where the dim7
+# chord's notes sit: 2, 5, 8 and 11 half steps up (D F Ab B in C).
+SIXTH_DIMINISHED = {"maj6 dim": "6", "min6 dim": "m6"}
+DIM7_STEPS = {2, 5, 8, 11}
 # The order the Scale button steps through. "key" means the key's own scale;
 # "improvise" means notes to play over whatever chord the left hand holds,
 # and "improvise (spicy)" picks tenser scales where there are some.
@@ -596,6 +606,19 @@ def scale_for(tonic, minor, scale_name):
         return key_scale(tonic, minor)
     notes = spell_scale(tonic, tonic_letter(tonic, minor), OTHER_SCALES[scale_name])
     return [(pitch_class, name, False) for pitch_class, name in notes]
+
+
+def sixth_dim_chords(tonic, minor, scale_name):
+    """Split a 6th diminished scale into its two chords.
+
+    Returns the 6 chord's name, the dim7 chord's name, and the dim7's
+    pitch classes: for C maj6 dim, ('C6', 'Bdim7', {2, 5, 8, 11}).
+    """
+    notes = scale_for(tonic, minor, scale_name)
+    sixth = notes[0][1] + SIXTH_DIMINISHED[scale_name]  # built on the first note
+    dim = notes[-1][1] + "dim7"                         # built on the last (the 7th)
+    dim_notes = {(tonic + steps) % 12 for steps in DIM7_STEPS}
+    return sixth, dim, dim_notes
 
 
 # Modes: a 7-note scale started from a different note. In C major, starting
