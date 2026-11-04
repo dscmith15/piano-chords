@@ -621,6 +621,38 @@ def sixth_dim_chords(tonic, minor, scale_name):
     return sixth, dim, dim_notes
 
 
+def sixth_dim_movement(notes, tonic, minor, scale_name):
+    """Barry Harris's movement: step every note up to the next scale note.
+
+    In a 6th diminished scale the chords take turns, so moving each note
+    of the 6 chord up one scale note gives the dim7, and moving the dim7's
+    notes up gives the 6 chord again: C4 E4 G4 A4 -> D4 F4 Ab4 B4.
+    Works for any voicing of at least 3 notes from one of the two chords.
+
+    Returns (the next chord's name, its MIDI notes, their names), or None
+    if the notes aren't from either chord.
+    """
+    scale = scale_for(tonic, minor, scale_name)
+    names = {pc: name for pc, name, optional in scale}
+    sixth, dim, dim_notes = sixth_dim_chords(tonic, minor, scale_name)
+    pitch_classes = {n % 12 for n in notes}
+    if len(pitch_classes) < 3:
+        return None
+    if pitch_classes <= dim_notes:          # <= on sets: "all of them are in"
+        next_name = sixth
+    elif pitch_classes <= set(names) - dim_notes:
+        next_name = dim
+    else:
+        return None
+    moved = []
+    for note in sorted(notes):
+        up = note + 1
+        while up % 12 not in names:  # find the next note that's in the scale
+            up += 1
+        moved.append(up)
+    return next_name, moved, [names[n % 12] for n in moved]
+
+
 # Modes: a 7-note scale started from a different note. In C major, starting
 # on D gives D Dorian, on G gives G Mixolydian. Each mode has its own
 # pattern of half steps above its first note, so the pattern names it.

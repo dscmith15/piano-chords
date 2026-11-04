@@ -7,7 +7,7 @@ from music import (MAJOR_KEY_NAMES, MINOR_KEY_NAMES, chord_intervals, chord_keys
                    chord_matches, chord_names, chord_position, chord_voicing,
                    improv_scale, SCALE_NAMES, interval_name, note_name, note_spellings,
                    primary_chord, progression, scale_for, SIXTH_DIMINISHED, sixth_dim_chords,
-                   spelled_name, staff_step)
+                   sixth_dim_movement, spelled_name, staff_step)
 
 WIDTH, HEIGHT = 800, 480  # the usual resolution of a 5-inch Pi screen
 BACKGROUND = (20, 20, 30)
@@ -19,6 +19,7 @@ BUTTON = (45, 45, 65)
 BUTTON_SELECTED = (30, 120, 110)
 IN_CHORD = (60, 200, 180)      # teal: a note you're playing
 OUTSIDE_KEY = (255, 150, 60)   # orange: a note you're playing that's not in the key
+NEXT_KEY = (40, 120, 110)      # dark teal: a key to move to next (the movement)
 # In improvise mode, each suggested note's name is colored by its role.
 ROLE_COLORS = {"chord": IN_CHORD, "color": TEXT, "avoid": OUTSIDE_KEY}
 WHITE_KEY = (225, 225, 230)
@@ -255,11 +256,11 @@ def draw_key_marker(screen, center, pitch_class, scale, optional, chord, avoid, 
         pygame.draw.circle(screen, OUTSIDE_KEY, center, 4, 1)  # an orange ring: careful
 
 
-def draw_keyboard(screen, keys, font, sounding, scale, optional, chord, avoid):
+def draw_keyboard(screen, keys, font, sounding, next_keys, scale, optional, chord, avoid):
     """The 88-key keyboard, lighting up the keys being played.
 
-    `keys` comes from make_keyboard() and `sounding` is the MIDI notes being
-    played. The other arguments are sets of pitch classes, marked with dots
+    `keys` comes from make_keyboard(), `sounding` is the MIDI notes being
+    played, and `next_keys` is MIDI notes to move to next (shown darker). The other arguments are sets of pitch classes, marked with dots
     in every octave: the scale's notes, notes to ring instead (a minor
     key's optional raised 7th, or a 6 dim scale's dim7 notes), chord tones
     and notes to avoid (both in improvise mode).
@@ -271,11 +272,13 @@ def draw_keyboard(screen, keys, font, sounding, scale, optional, chord, avoid):
             # A key you're playing lights up: teal, or orange if it's
             # outside the scale (with no key, everything is teal).
             color = IN_CHORD if not allowed or pitch_class in allowed else OUTSIDE_KEY
+        elif note in next_keys:
+            color = NEXT_KEY
         else:
             color = BLACK_KEY if is_black else WHITE_KEY
         pygame.draw.rect(screen, color, rect, border_bottom_left_radius=2,
                          border_bottom_right_radius=2)
-        if note not in sounding:
+        if note not in sounding and note not in next_keys:
             center = (rect.centerx, rect.bottom - (10 if is_black else 26))
             draw_key_marker(screen, center, pitch_class, scale, optional, chord, avoid, is_black)
         if pitch_class == 0:
@@ -547,6 +550,7 @@ while running:
     # The dots to put on the keyboard: (scale, optional, chord, avoid).
     # With no key there are none, and only the keys you play light up.
     marks = (set(), set(), set(), set())
+    movement = None  # Barry Harris's next chord, in a 6 dim scale
     if selected_key:
         scale_name = SCALE_NAMES[scale_index]
         playing = {n % 12 for n in sounding}
@@ -580,6 +584,7 @@ while running:
                 # turns with the 6 chord's (dots) up the keyboard.
                 sixth, dim, dim_notes = sixth_dim_chords(*selected_key, scale_name)
                 scale, optional = scale - dim_notes, dim_notes
+                movement = sixth_dim_movement(sounding, *selected_key, scale_name)
             marks = (scale, optional, set(), set())
             if scale_name == "key":
                 title = key_label(selected_key) + " scale"
@@ -597,7 +602,8 @@ while running:
             title += "   (tap to change)"
         draw_text(screen, label_font, title, DIM_TEXT, (SCALE_BUTTON.centerx, SCALE_BUTTON.top + 14))
         draw_text_row(screen, keys_font, words, (SCALE_BUTTON.centerx, SCALE_BUTTON.top + 40))
-    draw_keyboard(screen, keyboard, octave_font, sounding, *marks)  # * unpacks the 4 sets
+    next_keys = movement[1] if movement else []
+    draw_keyboard(screen, keyboard, octave_font, sounding, next_keys, *marks)  # * unpacks the 4 sets
 
     # What the big chord name describes: every note you're playing, or in
     # improvise mode the left hand's chord, so a melody on top doesn't
@@ -662,19 +668,30 @@ while running:
             # With a key chosen, show the chord's job in that key, and the
             # chords that usually come next: "C (I)   Am (vi)".
             result = progression(named, *selected_key)
-            draw_text(screen, label_font, "Next", DIM_TEXT, strip_label, "midleft")
+            if movement:
+                # In a 6 dim scale, the movement replaces the usual
+                # suggestions: "Bdim7:  D F Ab B", lowest note first.
+                next_name, next_notes, next_names = movement
+                draw_text(screen, label_font, "Next  (each note up one scale step)", DIM_TEXT,
+                          strip_label, "midleft")
+                draw_text(screen, keys_font, next_name + ":   " + " ".join(next_names), TEXT,
+                          strip_text, "midleft")
+            else:
+                draw_text(screen, label_font, "Next", DIM_TEXT, strip_label, "midleft")
             if result:
                 numeral, job, nexts = result
                 draw_text(screen, numeral_font, numeral, TEXT,
                           (NAME_X, CHORD_CARD.top + 156), "midleft")
                 draw_text(screen, label_font, fit_text(label_font, job, NAME_ROOM), DIM_TEXT,
                           (NAME_X, CHORD_CARD.top + 196), "midleft")
-                suggestions = "     ".join(f"{name} ({n})" for n, name in nexts)
-                draw_text(screen, keys_font, suggestions, TEXT, strip_text, "midleft")
+                if not movement:
+                    suggestions = "     ".join(f"{name} ({n})" for n, name in nexts)
+                    draw_text(screen, keys_font, suggestions, TEXT, strip_text, "midleft")
             else:
                 draw_text(screen, small_font, "not in " + key_label(selected_key), DIM_TEXT,
                           (NAME_X, CHORD_CARD.top + 156), "midleft")
-                draw_text(screen, small_font, "-", DIM_TEXT, strip_text, "midleft")
+                if not movement:
+                    draw_text(screen, small_font, "-", DIM_TEXT, strip_text, "midleft")
         elif chords:
             # No key chosen: every key the chord fits, "C: I", in one row.
             major_keys, minor_keys = chord_keys(named)
