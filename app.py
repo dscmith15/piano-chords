@@ -7,8 +7,8 @@ from music import (MAJOR_KEY_NAMES, MINOR_KEY_NAMES, chord_intervals, chord_keys
                    chord_matches, chord_names, chord_position, chord_voicing,
                    improv_scale, SCALE_NAMES, interval_name, key_chord_notes, note_name,
                    note_spellings, voice_lead,
-                   primary_chord, progression, scale_for, SIXTH_DIMINISHED, sixth_dim_chords,
-                   sixth_dim_movement, spelled_name, staff_step)
+                   primary_chord, progression, scale_for, DIM_SCALES, dim_scale_chords,
+                   dim_scale_movement, spelled_name, staff_step)
 
 WIDTH, HEIGHT = 800, 480  # the usual resolution of a 5-inch Pi screen
 BACKGROUND = (20, 20, 30)
@@ -263,7 +263,7 @@ def draw_keyboard(screen, keys, font, sounding, next_keys, scale, optional, chor
     `keys` comes from make_keyboard(), `sounding` is the MIDI notes being
     played, and `next_keys` is MIDI notes to move to next (shown darker). The other arguments are sets of pitch classes, marked with dots
     in every octave: the scale's notes, notes to ring instead (a minor
-    key's optional raised 7th, or a 6 dim scale's dim7 notes), chord tones
+    key's optional raised 7th, or a dim scale's dim7 notes), chord tones
     and notes to avoid (both in improvise mode).
     """
     allowed = scale | optional | chord
@@ -555,7 +555,7 @@ while running:
     # The dots to put on the keyboard: (scale, optional, chord, avoid).
     # With no key there are none, and only the keys you play light up.
     marks = (set(), set(), set(), set())
-    movement = None  # Barry Harris's next chord, in a 6 dim scale
+    movement = None  # Barry Harris's next chord, in one of his dim scales
     if selected_key:
         scale_name = SCALE_NAMES[scale_index]
         playing = {n % 12 for n in sounding}
@@ -584,19 +584,19 @@ while running:
             scale_notes = scale_for(*selected_key, scale_name)
             scale = {pc for pc, name, optional in scale_notes if not optional}
             optional = {pc for pc, name, is_optional in scale_notes if is_optional}
-            if scale_name in SIXTH_DIMINISHED:
+            if scale_name in DIM_SCALES:
                 # Ring the dim7 chord's notes, so you can see them take
-                # turns with the 6 chord's (dots) up the keyboard.
-                sixth, dim, dim_notes = sixth_dim_chords(*selected_key, scale_name)
+                # turns with the home chord's (dots) up the keyboard.
+                home, dim, dim_notes = dim_scale_chords(*selected_key, scale_name)
                 scale, optional = scale - dim_notes, dim_notes
-                movement = sixth_dim_movement(sounding, *selected_key, scale_name)
+                movement = dim_scale_movement(sounding, *selected_key, scale_name)
             marks = (scale, optional, set(), set())
             if scale_name == "key":
                 title = key_label(selected_key) + " scale"
             else:
                 title = key_label(selected_key).split()[0] + " " + scale_name  # "C blues"
-            if scale_name in SIXTH_DIMINISHED:
-                title += f":  {sixth} + {dim}"  # "C maj6 dim:  C6 + Bdim7"
+            if scale_name in DIM_SCALES:
+                title += f":  {home} + {dim}"  # "C maj6 dim:  C6 + Bdim7"
             words = []
             for pc, name, is_optional in scale_notes:
                 text = f"({name})" if is_optional else name
@@ -607,7 +607,7 @@ while running:
             title += "   (tap to change)"
         draw_text(screen, label_font, title, DIM_TEXT, (SCALE_BUTTON.centerx, SCALE_BUTTON.top + 14))
         draw_text_row(screen, keys_font, words, (SCALE_BUTTON.centerx, SCALE_BUTTON.top + 40))
-    # Keys to move to next, shown on the keyboard: the 6 dim movement, or
+    # Keys to move to next, shown on the keyboard: the dim scale movement, or
     # (set further down) the way into the picked next chord.
     next_keys = movement[1] if movement else []
 
@@ -675,7 +675,7 @@ while running:
             # chords that usually come next: "C (I)   Am (vi)".
             result = progression(named, *selected_key)
             if movement:
-                # In a 6 dim scale, the movement replaces the usual
+                # In a dim scale, the movement replaces the usual
                 # suggestions: "Bdim7:  D F Ab B", lowest note first.
                 next_name, next_notes, next_names = movement
                 draw_text(screen, label_font, "Next  (each note up one scale step)", DIM_TEXT,

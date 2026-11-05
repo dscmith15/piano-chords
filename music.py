@@ -626,10 +626,13 @@ OTHER_SCALES = {
     # Bdim7 (B D F Ab) in between.
     "maj6 dim": [(0, 0), (2, 1), (4, 2), (5, 3), (7, 4), (8, 5), (9, 5), (11, 6)],
     "min6 dim": [(0, 0), (2, 1), (3, 2), (5, 3), (7, 4), (8, 5), (9, 5), (11, 6)],
+    # His dominant 7th version: the Mixolydian scale with a natural 7th added.
+    # C dom7 dim is C D E F G Ab Bb B: C7 (C E G Bb), with the same Bdim7 in between.
+    "dom7 dim": [(0, 0), (2, 1), (4, 2), (5, 3), (7, 4), (8, 5), (10, 6), (11, 6)],
 }
-# Each 6th diminished scale's 6 chord (its suffix), and where the dim7
-# chord's notes sit: 2, 5, 8 and 11 half steps up (D F Ab B in C).
-SIXTH_DIMINISHED = {"maj6 dim": "6", "min6 dim": "m6"}
+# Each of these scales' home chord (its suffix), and where the dim7 chord's
+# notes sit: 2, 5, 8 and 11 half steps up (D F Ab B in C).
+DIM_SCALES = {"maj6 dim": "6", "min6 dim": "m6", "dom7 dim": "7"}
 DIM7_STEPS = {2, 5, 8, 11}
 # The order the Scale button steps through. "key" means the key's own scale;
 # "improvise" means notes to play over whatever chord the left hand holds,
@@ -668,25 +671,25 @@ def scale_for(tonic, minor, scale_name):
     return [(pitch_class, name, False) for pitch_class, name in notes]
 
 
-def sixth_dim_chords(tonic, minor, scale_name):
-    """Split a 6th diminished scale into its two chords.
+def dim_scale_chords(tonic, minor, scale_name):
+    """Split a Barry Harris diminished scale into its two chords.
 
-    Returns the 6 chord's name, the dim7 chord's name, and the dim7's
+    Returns the home chord's name, the dim7 chord's name, and the dim7's
     pitch classes: for C maj6 dim, ('C6', 'Bdim7', {2, 5, 8, 11}).
     """
     notes = scale_for(tonic, minor, scale_name)
-    sixth = notes[0][1] + SIXTH_DIMINISHED[scale_name]  # built on the first note
+    home = notes[0][1] + DIM_SCALES[scale_name]         # built on the first note
     dim = notes[-1][1] + "dim7"                         # built on the last (the 7th)
     dim_notes = {(tonic + steps) % 12 for steps in DIM7_STEPS}
-    return sixth, dim, dim_notes
+    return home, dim, dim_notes
 
 
-def sixth_dim_movement(notes, tonic, minor, scale_name):
+def dim_scale_movement(notes, tonic, minor, scale_name):
     """Barry Harris's movement: step every note up to the next scale note.
 
-    In a 6th diminished scale the chords take turns, so moving each note
-    of the 6 chord up one scale note gives the dim7, and moving the dim7's
-    notes up gives the 6 chord again: C4 E4 G4 A4 -> D4 F4 Ab4 B4.
+    In these scales the chords take turns, so moving each note of the home
+    chord up one scale note gives the dim7, and moving the dim7's notes up
+    gives the home chord again: C4 E4 G4 A4 -> D4 F4 Ab4 B4.
     Works for any voicing of at least 3 notes from one of the two chords.
 
     Returns (the next chord's name, its MIDI notes, their names), or None
@@ -694,12 +697,12 @@ def sixth_dim_movement(notes, tonic, minor, scale_name):
     """
     scale = scale_for(tonic, minor, scale_name)
     names = {pc: name for pc, name, optional in scale}
-    sixth, dim, dim_notes = sixth_dim_chords(tonic, minor, scale_name)
+    home, dim, dim_notes = dim_scale_chords(tonic, minor, scale_name)
     pitch_classes = {n % 12 for n in notes}
     if len(pitch_classes) < 3:
         return None
     if pitch_classes <= dim_notes:          # <= on sets: "all of them are in"
-        next_name = sixth
+        next_name = home
     elif pitch_classes <= set(names) - dim_notes:
         next_name = dim
     else:
